@@ -42,6 +42,61 @@ async def test_snapshot_includes_heading_text(session):
     assert '"Argus Test Shop"' in text
 
 
+async def test_snapshot_includes_plain_text_without_aria_semantics(session):
+    # Regressão real: rodando o BDD "vejo a mensagem de boas-vindas
+    # Bem-vindo" contra login.html de verdade, o agente falhou o passo Then
+    # dizendo que não havia mensagem — mas o screenshot de evidência
+    # mostrava "Bem-vindo! Lista de produtos carregada." bem visível. O
+    # snapshot só capturava headings/alerts/regiões live; um <p> comum sem
+    # nenhum atributo ARIA ficava invisível pro agente mesmo estando na
+    # tela. Login primeiro pra revelar a página de inventário (o <p> começa
+    # com display:none).
+    snapshot = await session.snapshot_text()
+    user_ref = _ref_for(snapshot, "Username")
+    pass_ref = _ref_for(snapshot, "Password")
+    login_ref = _ref_for(snapshot, "Login")
+    await session.fill(user_ref, "standard_user")
+    await session.fill(pass_ref, "secret_sauce")
+    await session.click(login_ref)
+
+    text = await session.snapshot_text()
+    assert "Bem-vindo! Lista de produtos carregada." in text
+    assert '] text "Bem-vindo! Lista de produtos carregada."' in text
+
+
+async def test_snapshot_dedupes_repeated_plain_text(session):
+    # Uma lista com o mesmo texto repetido não deve virar N entradas — só a
+    # presença do texto importa pra um veredito Then, e listas reais podem
+    # ter dezenas de linhas repetindo o mesmo rótulo (ex.: "Em estoque").
+    await session.page.evaluate(
+        """() => {
+            const ul = document.createElement('ul');
+            for (let i = 0; i < 5; i++) {
+                const li = document.createElement('li');
+                li.textContent = 'Repetido';
+                ul.appendChild(li);
+            }
+            document.body.appendChild(ul);
+        }"""
+    )
+    text = await session.snapshot_text()
+    assert text.count('"Repetido"') == 1
+
+
+async def test_snapshot_skips_container_with_only_nested_text(session):
+    # Um <div> que só embrulha um <p> não deve virar uma segunda entrada
+    # com o mesmo texto do filho.
+    await session.page.evaluate(
+        """() => {
+            const div = document.createElement('div');
+            div.innerHTML = '<p>Texto aninhado</p>';
+            document.body.appendChild(div);
+        }"""
+    )
+    text = await session.snapshot_text()
+    assert text.count("Texto aninhado") == 1
+
+
 async def test_snapshot_includes_alert_region_text_after_it_becomes_visible(session):
     snapshot = await session.snapshot_text()
     user_ref = _ref_for(snapshot, "Username")

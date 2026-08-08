@@ -22,6 +22,12 @@ _SNAPSHOT_JS = """
 () => {
   const results = [];
   let idx = 0;
+  // Cada chamada revarre e reatribui as refs do zero — sem isso, o
+  // segundo loop (texto sem ARIA) usa `data-argus-ref` como sinal de "já
+  // capturado no primeiro loop desta passada", mas um <p> tageado numa
+  // chamada anterior carregaria o atributo pra sempre e sumiria de todo
+  // snapshot seguinte (achado rodando de verdade: some após a 2ª chamada).
+  document.querySelectorAll('[data-argus-ref]').forEach((el) => el.removeAttribute('data-argus-ref'));
   const isVisible = (el) => {
     const rect = el.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return false;
@@ -59,6 +65,35 @@ _SNAPSHOT_JS = """
       (el.innerText ? el.innerText.trim().slice(0, 80) : '') ||
       el.getAttribute('value') || el.getAttribute('name') || '';
     results.push({ ref, role, name, disabled: !!el.disabled });
+  });
+  // Texto informativo SEM semântica ARIA (mensagem de confirmação/erro num
+  // <p>/<span>/<li> comum, achado rodando de verdade contra uma fixture:
+  // "Bem-vindo! Lista de produtos carregada." num <p> puro era invisível
+  // pro agente, que falhava o passo Then mesmo com o texto na tela). Só
+  // nós-folha (sem filho visível que já carregue texto próprio — evita
+  // <div><p>X</p></div> virar duas entradas com "X") e fora de qualquer
+  // elemento já capturado acima. Dedup por texto: uma lista/tabela com o
+  // mesmo texto repetido várias vezes vira 1 entrada só — o que importa
+  // pra um veredito Then é a presença do texto, não quantas vezes aparece.
+  const textSelector = 'p, span, li, td, th, dt, dd, label, small, strong, em, blockquote, figcaption, div';
+  const seenText = new Set();
+  document.querySelectorAll(textSelector).forEach((el) => {
+    if (el.hasAttribute('data-argus-ref')) return;
+    if (el.closest('[data-argus-ref]')) return;
+    if (!isVisible(el)) return;
+    const text = (el.innerText || '').trim();
+    if (!text) return;
+    const hasVisibleTextChild = Array.from(el.children).some(
+      (child) => isVisible(child) && (child.innerText || '').trim().length > 0,
+    );
+    if (hasVisibleTextChild) return;
+    const key = text.slice(0, 80);
+    if (seenText.has(key)) return;
+    seenText.add(key);
+    idx += 1;
+    const ref = 'e' + idx;
+    el.setAttribute('data-argus-ref', ref);
+    results.push({ ref, role: 'text', name: key, disabled: false });
   });
   return results;
 }
