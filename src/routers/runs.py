@@ -12,15 +12,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from src import auth, models, store
-from src.bdd import BddParseError, parse_bdd_script, validate_test_data
+from src import auth, models, run_service, store
 from src.events import list_events
-from src.llm_providers import get_provider
 
 router = APIRouter(dependencies=[Depends(auth.require_api_key)])
 
-TERMINAL_STATUSES = {"passed", "failed", "error", "canceled"}
-_VALID_PLATFORMS = {"web", "android", "ios"}
+TERMINAL_STATUSES = run_service.TERMINAL_STATUSES
 
 
 class RunCreate(BaseModel):
@@ -66,75 +63,34 @@ def _step_dict(step: models.Step) -> dict:
 
 def _run_detail_dict(run: models.Run) -> dict:
     return {
-        **_run_summary_dict(run),
+        **run_service.run_summary_dict(run),
         "bdd_script": run.bdd_script,
         "test_data_keys": sorted(store.get_run_test_data(run.id).keys()),
         "scenarios": [_scenario_dict(s) for s in store.list_scenarios(run.id)],
     }
 
 
-def _run_summary_dict(run: models.Run) -> dict:
-    return {
-        "id": run.id,
-        "platform": run.platform,
-        "app_url": run.app_url,
-        "binary_url": run.binary_url,
-        "status": run.status,
-        "error": run.error,
-        "cancel_requested": run.cancel_requested,
-        "llm_provider": run.llm_provider,
-        "llm_model": run.llm_model,
-        "scenarios_total": run.scenarios_total,
-        "scenarios_passed": run.scenarios_passed,
-        "scenarios_failed": run.scenarios_failed,
-        "tokens_in": run.tokens_in,
-        "tokens_out": run.tokens_out,
-        "cost_usd": run.cost_usd,
-        "created_at": run.created_at.isoformat() if run.created_at else None,
-        "started_at": run.started_at.isoformat() if run.started_at else None,
-        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
-    }
-
-
 @router.post("/api/runs")
 async def create_run(payload: RunCreate):
-    if payload.platform not in _VALID_PLATFORMS:
-        return JSONResponse(status_code=400, content={"error": f"Plataforma inválida: {payload.platform}"})
-    if payload.platform != "web" and not payload.binary_url:
-        return JSONResponse(status_code=400, content={"error": f"Plataforma '{payload.platform}' exige binary_url."})
-    if not payload.bdd_script.strip():
-        return JSONResponse(status_code=400, content={"error": "Script BDD vazio."})
-
     try:
-        scenarios = parse_bdd_script(payload.bdd_script)
-        validate_test_data(scenarios, payload.test_data)
-    except BddParseError as e:
+        run = run_service.create_run(
+            platform=payload.platform,
+            bdd_script=payload.bdd_script,
+            app_url=payload.app_url,
+            binary_url=payload.binary_url,
+            binary_auth_secret=payload.binary_auth_secret,
+            test_data=payload.test_data,
+            llm_provider=payload.llm_provider,
+            llm_model=payload.llm_model,
+        )
+    except run_service.RunServiceError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
-
-    llm_provider = payload.llm_provider or store.get_setting("default_llm_provider")
-    llm_model = payload.llm_model or store.get_setting("default_llm_model")
-    if not llm_provider or not get_provider(llm_provider):
-        return JSONResponse(status_code=400, content={"error": "Nenhum provider LLM configurado (defina um default em /config ou informe llm_provider)."})
-
-    run = store.create_run(
-        platform=payload.platform,
-        app_url=payload.app_url,
-        binary_url=payload.binary_url,
-        binary_auth_secret=payload.binary_auth_secret,
-        bdd_script=payload.bdd_script,
-        test_data=payload.test_data,
-        llm_provider=llm_provider,
-        llm_model=llm_model,
-    )
-    return _run_summary_dict(run)
+    return run_service.run_summary_dict(run)
 
 
 @router.get("/api/runs")
 async def list_runs(limit: int = 20, offset: int = 0, status: str | None = None, platform: str | None = None):
-    limit = max(1, min(limit, 100))
-    runs = store.list_runs(limit=limit, offset=offset, status=status, platform=platform)
-    total = store.count_runs(status=status, platform=platform)
-    return {"runs": [_run_summary_dict(r) for r in runs], "total": total, "limit": limit, "offset": offset}
+    return run_service.list_run_summaries(limit=limit, offset=offset, status=status, platform=platform)
 
 
 @router.get("/api/runs/{run_id}")
@@ -147,12 +103,12 @@ async def get_run(run_id: str):
 
 @router.post("/api/runs/{run_id}/cancel")
 async def cancel_run(run_id: str):
-    run = store.get_run(run_id)
-    if not run:
-        return JSONResponse(status_code=404, content={"error": "Run não encontrada."})
-    if run.status in TERMINAL_STATUSES:
-        return JSONResponse(status_code=400, content={"error": f"Run já terminou (status: {run.status})."})
-    store.request_cancel(run_id)
+    try:
+        run_service.request_cancel(run_id)
+    except run_service.RunNotFoundError as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
+    except run_service.RunServiceError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
     return {"id": run_id, "cancel_requested": True}
 
 
@@ -198,15 +154,10 @@ async def stream_run(run_id: str, request: Request, after: int = 0):
 
 @router.get("/api/runs/{run_id}/report")
 async def get_report(run_id: str):
-    run = store.get_run(run_id)
-    if not run:
-        return JSONResponse(status_code=404, content={"error": "Run não encontrada."})
-    if not run.artifacts_dir:
-        return JSONResponse(status_code=404, content={"error": "Relatório ainda não disponível — a run não terminou."})
-    report_path = Path(run.artifacts_dir) / "report.json"
-    if not report_path.exists():
-        return JSONResponse(status_code=404, content={"error": "report.json não encontrado."})
-    return JSONResponse(content=json.loads(report_path.read_text(encoding="utf-8")))
+    try:
+        return JSONResponse(content=run_service.get_report_dict(run_id))
+    except (run_service.RunNotFoundError, run_service.RunServiceError) as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
 
 
 @router.get("/api/runs/{run_id}/report.html")

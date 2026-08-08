@@ -33,7 +33,7 @@ dependencies = [
     "Appium-Python-Client>=4.0.0",
     "gherkin-official>=29.0.0",
     "jinja2>=3.1.0",
-    "mcp>=1.2.0",
+    "mcp>=2.0.0",
     "a2a-sdk>=0.2.0",
 ]
 
