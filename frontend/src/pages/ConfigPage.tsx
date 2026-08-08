@@ -244,6 +244,17 @@ export function ConfigPage() {
                 placeholder="claude-3-5-haiku-latest"
               />
             </div>
+            <div className="space-y-2">
+              <Label>{t('config.retentionDays')}</Label>
+              <Input
+                type="text"
+                inputMode="numeric"
+                value={field('retention_days')}
+                onChange={(e) => setField('retention_days', e.target.value.replace(/\D/g, ''))}
+                placeholder="30"
+              />
+              <p className="text-xs text-muted-foreground">{t('config.retentionDaysHelp')}</p>
+            </div>
           </div>
 
           <Button onClick={handleSave} disabled={saveConfig.isPending}>

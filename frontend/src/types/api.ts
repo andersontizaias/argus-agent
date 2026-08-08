@@ -22,6 +22,7 @@ export interface ProjectConfig {
   custom_llm_base_url: string;
   default_llm_provider: string;
   default_llm_model: string;
+  retention_days: string;
 }
 
 export interface LlmProviderTestResult {

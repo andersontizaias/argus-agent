@@ -155,3 +155,32 @@ def list_runs(
 def count_runs(*, status: str | None = None, platform: str | None = None) -> int:
     with db.session_scope() as session:
         return _filtered_runs_query(session, status=status, platform=platform).count()
+
+
+_TERMINAL_STATUSES = ("passed", "failed", "error", "canceled")
+
+
+def list_terminated_runs_older_than(cutoff: datetime) -> list[models.Run]:
+    """Runs que já chegaram a um status final (nunca `queued`/`provisioning`/
+    `running` — essas não são candidatas a prune mesmo se antigas, seriam
+    runs travadas, um problema à parte) e terminaram antes de `cutoff`."""
+    with db.session_scope() as session:
+        rows = (
+            session.query(models.Run)
+            .filter(models.Run.status.in_(_TERMINAL_STATUSES))
+            .filter(models.Run.finished_at.isnot(None))
+            .filter(models.Run.finished_at < cutoff)
+            .all()
+        )
+        session.expunge_all()
+        return rows
+
+
+def delete_run(run_id: str) -> None:
+    """Apaga a run e, em cascata (ver models.py), seus cenários/passos/
+    evidências/eventos — só a linha do banco; o diretório de artefatos em
+    disco é responsabilidade de quem chama (ver src/prune.py)."""
+    with db.session_scope() as session:
+        run = session.get(models.Run, run_id)
+        if run:
+            session.delete(run)

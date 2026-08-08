@@ -9,10 +9,12 @@ para quando `max_concurrent_runs` for implementado (fase de escala)."""
 import asyncio
 import logging
 import signal
+import time
 from types import FrameType
 
 from src import (  # noqa: F401 — import ajusta PATH/env pro Android SDK (efeito colateral)
     android_env,
+    prune,
     store,
 )
 from src.agent.graph import run_graph
@@ -20,8 +22,13 @@ from src.agent.graph import run_graph
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 2.0
+# Prune é manutenção, não algo que precisa reagir em tempo real — rodar a
+# cada poll (2s) seria caro à toa (uma query + possível varredura de
+# diretórios) sem nenhum benefício, já que a retenção é medida em dias.
+PRUNE_INTERVAL_SECONDS = 3600.0
 
 _shutdown_requested = False
+_last_prune_at: float = 0.0
 
 
 def _request_shutdown(_signum: int, _frame: FrameType | None) -> None:
@@ -51,9 +58,25 @@ async def _process_next_queued_run() -> bool:
     return True
 
 
+async def _maybe_prune() -> None:
+    """Só dispara de fato a cada PRUNE_INTERVAL_SECONDS — a checagem em si
+    (comparar um timestamp monotônico) é barata o bastante pra rodar em
+    todo giro do loop sem custo real."""
+    global _last_prune_at
+    now = time.monotonic()
+    if now - _last_prune_at < PRUNE_INTERVAL_SECONDS:
+        return
+    _last_prune_at = now
+    try:
+        await asyncio.to_thread(prune.prune_old_runs)
+    except Exception as e:  # nunca deve derrubar o worker — é manutenção, não o caminho crítico
+        logger.warning("Falha ao rodar o prune de runs antigas: %s", e)
+
+
 async def _loop() -> None:
     while not _shutdown_requested:
         processed = await _process_next_queued_run()
+        await _maybe_prune()
         if not processed:
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
 

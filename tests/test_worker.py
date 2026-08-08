@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from src import store, worker
@@ -8,8 +10,10 @@ pytestmark = pytest.mark.anyio
 @pytest.fixture(autouse=True)
 def _reset_shutdown_flag():
     worker._shutdown_requested = False
+    worker._last_prune_at = 0.0
     yield
     worker._shutdown_requested = False
+    worker._last_prune_at = 0.0
 
 
 async def test_process_next_queued_run_returns_false_when_empty(monkeypatch):
@@ -50,6 +54,7 @@ async def test_process_next_queued_run_marks_error_on_unhandled_exception(monkey
 
 async def test_loop_stops_when_shutdown_requested(monkeypatch):
     monkeypatch.setattr(worker, "POLL_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(worker, "_maybe_prune", _noop_async)
 
     call_count = 0
 
@@ -65,7 +70,41 @@ async def test_loop_stops_when_shutdown_requested(monkeypatch):
     assert call_count == 2
 
 
+async def _noop_async() -> None:
+    pass
+
+
 def test_request_shutdown_sets_flag():
     assert worker._shutdown_requested is False
     worker._request_shutdown(15, None)
     assert worker._shutdown_requested is True
+
+
+async def test_maybe_prune_runs_once_interval_elapsed(monkeypatch):
+    calls = []
+    monkeypatch.setattr(worker.prune, "prune_old_runs", lambda: calls.append(1) or 0)
+    worker._last_prune_at = 0.0  # bem no passado — "elapsed" na primeira checagem
+
+    await worker._maybe_prune()
+
+    assert calls == [1]
+
+
+async def test_maybe_prune_skips_before_interval_elapsed(monkeypatch):
+    calls = []
+    monkeypatch.setattr(worker.prune, "prune_old_runs", lambda: calls.append(1) or 0)
+    worker._last_prune_at = time.monotonic()  # acabou de rodar — não deveria rodar de novo
+
+    await worker._maybe_prune()
+
+    assert calls == []
+
+
+async def test_maybe_prune_swallows_exceptions(monkeypatch):
+    def _broken():
+        raise RuntimeError("disco cheio")
+
+    monkeypatch.setattr(worker.prune, "prune_old_runs", _broken)
+    worker._last_prune_at = 0.0
+
+    await worker._maybe_prune()  # não deve levantar — worker não pode morrer por causa do prune

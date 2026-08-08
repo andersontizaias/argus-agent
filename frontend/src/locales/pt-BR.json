@@ -35,7 +35,9 @@
     "apiKeyDismiss": "Já copiei",
     "apiKeyRevoke": "Revogar",
     "apiKeyRevoked": "revogada",
-    "creating": "Criando..."
+    "creating": "Criando...",
+    "retentionDays": "Retenção de artefatos (dias)",
+    "retentionDaysHelp": "Runs mais antigas que isso são apagadas permanentemente (artefatos + histórico). 0 desliga o prune."
   },
   "newRun": {
     "title": "Nova Execução",

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from src import auth, store, user_secrets
+from src import auth, prune, store, user_secrets
 from src.llm_providers import (
     SUPPORTED_PROVIDERS,
     build_chat_model,
@@ -50,6 +50,7 @@ async def get_config():
         "custom_llm_base_url": store.get_setting("custom_llm_base_url"),
         "default_llm_provider": store.get_setting("default_llm_provider"),
         "default_llm_model": store.get_setting("default_llm_model"),
+        "retention_days": store.get_setting("retention_days") or str(prune.DEFAULT_RETENTION_DAYS),
     }
     return {**secrets, **settings}
 
@@ -66,12 +67,15 @@ class ConfigUpdate(BaseModel):
     custom_llm_base_url: str = ""
     default_llm_provider: str = ""
     default_llm_model: str = ""
+    retention_days: str = ""
 
 
 @router.post("/api/config")
 async def save_config(update: ConfigUpdate):
     if update.ollama_timeout_seconds and not update.ollama_timeout_seconds.isdigit():
         return JSONResponse(status_code=400, content={"error": "Timeout do Ollama precisa ser um número inteiro de segundos."})
+    if update.retention_days and not update.retention_days.isdigit():
+        return JSONResponse(status_code=400, content={"error": "Retenção precisa ser um número inteiro de dias (0 desliga o prune)."})
 
     # Mesmo raciocínio do get_config acima: salva a chave de todo provider,
     # exigida ou não — o bug original (`if not provider.needs_api_key:
@@ -87,6 +91,7 @@ async def save_config(update: ConfigUpdate):
     store.set_setting("custom_llm_base_url", update.custom_llm_base_url)
     store.set_setting("default_llm_provider", update.default_llm_provider)
     store.set_setting("default_llm_model", update.default_llm_model)
+    store.set_setting("retention_days", update.retention_days)
     return {"status": "ok", "message": "Configuração salva com sucesso."}
 
 
