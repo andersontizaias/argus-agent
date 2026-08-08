@@ -75,7 +75,7 @@ async def _reset_app_state(resources: "_RunResources", app_url: str | None) -> N
     page = await resources.context.new_page()
     resources.web_session.page = page
     if app_url:
-        await page.goto(app_url, wait_until="domcontentloaded", timeout=30_000)
+        await page.goto(app_url, wait_until="load", timeout=30_000)
     if old_context:
         await old_context.close()
 
@@ -124,7 +124,7 @@ async def provision_target(state: RunState) -> RunState:
         run_dir.mkdir(parents=True, exist_ok=True)
         resources.web_session = WebSession(page=page, run_id=run_id, artifacts_dir=run_dir)
         if run.app_url:
-            await page.goto(run.app_url, wait_until="domcontentloaded", timeout=30_000)
+            await page.goto(run.app_url, wait_until="load", timeout=30_000)
     except Exception as e:
         await _safe_close(resources)
         return _fail(state, run_id, f"Falha ao provisionar o navegador: {e}")

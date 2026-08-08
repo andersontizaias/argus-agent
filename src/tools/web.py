@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.tools import tool
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
 
 _SNAPSHOT_JS = """
@@ -78,7 +79,7 @@ class WebSession:
         self.step_position = step_position
 
     async def snapshot_text(self) -> str:
-        elements: list[dict[str, Any]] = await self.page.evaluate(_SNAPSHOT_JS)
+        elements = await self._evaluate_with_retry()
         url = self.page.url
         title = await self.page.title()
         lines = [f"URL: {url}", f'Título: "{title}"', ""]
@@ -88,6 +89,21 @@ class WebSession:
             state = " [desabilitado]" if el.get("disabled") else ""
             lines.append(f'[{el["ref"]}] {el["role"]} "{el["name"]}"{state}')
         return "\n".join(lines)
+
+    async def _evaluate_with_retry(self) -> list[dict[str, Any]]:
+        """`page.evaluate` pode disparar "Execution context was destroyed,
+        most likely because of a navigation" se a página ainda estiver
+        assentando (redirect via JS, recursos carregando) logo após um
+        `goto` — um gotcha conhecido do Playwright, não algo que dá pra
+        eliminar 100% só escolhendo o `wait_until` certo. Uma nova tentativa
+        curta depois de uma pequena espera resolve na prática."""
+        try:
+            return await self.page.evaluate(_SNAPSHOT_JS)
+        except PlaywrightError as e:
+            if "context was destroyed" not in str(e).lower():
+                raise
+            await self.page.wait_for_timeout(800)
+            return await self.page.evaluate(_SNAPSHOT_JS)
 
     def _locator(self, ref: str):
         return self.page.locator(f'[data-argus-ref="{ref}"]')
@@ -99,7 +115,7 @@ class WebSession:
         return locator
 
     async def navigate(self, url: str) -> str:
-        await self.page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+        await self.page.goto(url, wait_until="load", timeout=30_000)
         return await self.snapshot_text()
 
     async def click(self, ref: str) -> str:
@@ -139,7 +155,7 @@ class WebSession:
             raise WebToolError(f'Texto "{text}" não apareceu em {timeout_ms}ms: {e}') from e
 
     async def back(self) -> str:
-        await self.page.go_back(wait_until="domcontentloaded", timeout=15_000)
+        await self.page.go_back(wait_until="load", timeout=15_000)
         return await self.snapshot_text()
 
     async def get_url(self) -> str:

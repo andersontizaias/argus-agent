@@ -4,6 +4,7 @@ sem depender de rede nem de LLM."""
 from pathlib import Path
 
 import pytest
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
 from src.tools.web import WebSession, WebToolError, build_web_tools
@@ -29,6 +30,37 @@ async def test_snapshot_lists_visible_interactive_elements(session):
     assert '"Password"' in text
     assert "Login" in text
     assert "URL: file://" in text
+
+
+async def test_snapshot_retries_once_after_execution_context_destroyed(session):
+    # Regressão real (achada rodando contra saucedemo.com de verdade): o
+    # evaluate() do snapshot pode pegar a página no meio de uma navegação
+    # (redirect JS logo após o load) — "Execution context was destroyed" é
+    # um gotcha conhecido do Playwright, não eliminável só escolhendo bem o
+    # wait_until do goto. Uma segunda tentativa depois de uma pequena
+    # espera resolve na prática.
+    real_evaluate = session.page.evaluate
+    calls = {"n": 0}
+
+    async def _flaky_evaluate(js):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PlaywrightError("Execution context was destroyed, most likely because of a navigation")
+        return await real_evaluate(js)
+
+    session.page.evaluate = _flaky_evaluate  # type: ignore[method-assign]
+    text = await session.snapshot_text()
+    assert calls["n"] == 2
+    assert '"Username"' in text
+
+
+async def test_snapshot_reraises_unrelated_evaluate_errors(session):
+    async def _broken_evaluate(_js):
+        raise PlaywrightError("some other unrelated failure")
+
+    session.page.evaluate = _broken_evaluate  # type: ignore[method-assign]
+    with pytest.raises(PlaywrightError, match="unrelated failure"):
+        await session.snapshot_text()
 
 
 async def test_navigate_updates_page_and_returns_snapshot(session):
