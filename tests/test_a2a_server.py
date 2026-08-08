@@ -96,7 +96,11 @@ def test_build_agent_card_has_expected_shape():
     assert card.name == "Argus Agent"
     assert len(card.skills) == 1
     assert card.skills[0].id == "execute_qa_test"
-    assert card.supported_interfaces[0].url == "http://127.0.0.1:8765/a2a/"
+    # Sem barra final — precisa bater exatamente com o `rpc_url` registrado
+    # em main.py (`create_jsonrpc_routes(rpc_url="/a2a")`); regressão real:
+    # uma barra final divergente aqui fazia o client a2a-sdk falhar com
+    # "HTTP Error 307" (não segue redirect em streaming).
+    assert card.supported_interfaces[0].url == "http://127.0.0.1:8765/a2a"
     assert card.supported_interfaces[0].protocol_binding == "JSONRPC"
     assert card.capabilities.streaming is True
 
@@ -108,6 +112,29 @@ def _status_states(queue: _FakeEventQueue) -> list:
     from a2a.types import TaskStatusUpdateEvent
 
     return [e.status.state for e in queue.events if isinstance(e, TaskStatusUpdateEvent)]
+
+
+async def test_execute_enqueues_a_task_before_any_status_update(configured_provider, monkeypatch):
+    # Regressão real: rodando um roundtrip de verdade com o client a2a-sdk,
+    # o framework rejeitava a resposta com "Agent should enqueue Task
+    # before TaskStatusUpdateEvent event" — o primeiro evento publicado
+    # precisa ser o `Task` em si, não um TaskStatusUpdateEvent direto.
+    from a2a.types import Task, TaskStatusUpdateEvent
+
+    async def fake_wait(_run_id, **_kw):
+        return {"status": "passed", "error": None}
+
+    monkeypatch.setattr(a2a_module, "_wait_for_terminal", fake_wait)
+
+    executor = ArgusAgentExecutor()
+    queue = _FakeEventQueue()
+    context = _make_context(data={"platform": "web", "app_url": "https://x", "bdd_script": VALID_BDD})
+
+    await executor.execute(context, queue)
+
+    assert isinstance(queue.events[0], Task)
+    assert queue.events[0].id == "t1"
+    assert isinstance(queue.events[1], TaskStatusUpdateEvent)
 
 
 async def test_execute_happy_path_emits_submitted_working_completed(configured_provider, monkeypatch):

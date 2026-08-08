@@ -19,14 +19,18 @@ from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
+from a2a.server.tasks.task_updater import TaskUpdater
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
     AgentInterface,
     AgentSkill,
     Part,
+    Task,
+    TaskState,
+    TaskStatus,
 )
-from a2a.utils import DEFAULT_RPC_URL, TransportProtocol
+from a2a.utils import TransportProtocol
 
 from src import run_service
 from src.settings import HOST, PORT, VERSION
@@ -52,7 +56,15 @@ def build_agent_card(base_url: str) -> AgentCard:
         version=VERSION,
         supported_interfaces=[
             AgentInterface(
-                url=f"{base_url}{DEFAULT_RPC_URL}",
+                # `base_url` já é o caminho EXATO registrado por
+                # `create_jsonrpc_routes(rpc_url=...)` em main.py — sem
+                # barra final. Concatenar `DEFAULT_RPC_URL` ("/") aqui
+                # (uso pensado pro padrão "monta em prefixo, RPC na raiz
+                # do sub-app") criava uma URL com barra final divergente
+                # da rota de verdade; o client a2a-sdk não segue 307 em
+                # streaming e falhava com "HTTP Error 307" — achado
+                # rodando um roundtrip real.
+                url=base_url,
                 protocol_binding=TransportProtocol.JSONRPC.value,
                 protocol_version="1.0",
             ),
@@ -133,9 +145,18 @@ class ArgusAgentExecutor(AgentExecutor):
         self._task_to_run: dict[str, str] = {}
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        from a2a.server.tasks.task_updater import TaskUpdater
-
         task_id, context_id = _require_ids(context)
+        # O framework exige que o PRIMEIRO evento publicado seja o `Task`
+        # em si (estabelece que a task existe) — publicar um
+        # `TaskStatusUpdateEvent` antes disso é rejeitado com
+        # "Agent should enqueue Task before TaskStatusUpdateEvent event"
+        # (achado rodando um roundtrip de verdade com o client a2a-sdk).
+        # Reusa `context.current_task` se o handler já criou um.
+        initial_task = context.current_task or Task(
+            id=task_id, context_id=context_id, status=TaskStatus(state=TaskState.TASK_STATE_SUBMITTED)
+        )
+        await event_queue.enqueue_event(initial_task)
+
         updater = TaskUpdater(event_queue, task_id, context_id)
         await updater.submit()
 
@@ -161,8 +182,6 @@ class ArgusAgentExecutor(AgentExecutor):
             await updater.failed(message)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        from a2a.server.tasks.task_updater import TaskUpdater
-
         task_id, context_id = _require_ids(context)
         run_id = self._task_to_run.get(task_id)
         if run_id:
