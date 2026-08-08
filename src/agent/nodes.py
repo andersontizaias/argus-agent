@@ -145,7 +145,13 @@ async def run_scenarios(state: RunState) -> RunState:
     provider = get_provider(run.llm_provider or "")
     if not provider:
         return _fail(state, run_id, f"Provider LLM desconhecido: {run.llm_provider}")
-    api_key = get_secret_plain(provider.secret_name) if provider.needs_api_key else ""
+    # `needs_api_key` é sobre a chave ser OBRIGATÓRIA (ex.: Anthropic sim,
+    # Ollama não) — não sobre se ela deve ser enviada quando existe. Ollama
+    # aceita uma chave opcional (Bearer token de um reverse proxy na frente
+    # do servidor); um `if provider.needs_api_key` aqui mandava sempre ""
+    # pro Ollama mesmo com uma chave configurada e válida (mesmo bug do
+    # save_config/get_config, corrigido antes — esse era o terceiro lugar).
+    api_key = get_secret_plain(provider.secret_name)
     chat_model = build_chat_model(provider.id, run.llm_model or provider.example_model, api_key)
 
     test_data = store.get_run_test_data(run_id)

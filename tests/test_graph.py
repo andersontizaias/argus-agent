@@ -185,3 +185,37 @@ async def test_cancel_requested_before_scenario_marks_it_skipped(monkeypatch, _c
     scenarios = store.list_scenarios(run.id)
     assert all(s.status == "skipped" for s in scenarios)
     assert store.get_run(run.id).status == "canceled"
+
+
+async def test_run_scenarios_sends_configured_ollama_api_key(monkeypatch):
+    # Regressão real (achada rodando contra um Ollama remoto de verdade
+    # atrás de proxy com auth): `needs_api_key=False` do Ollama é sobre a
+    # chave ser OPCIONAL, não sobre nunca deve ser enviada — `run_scenarios`
+    # tinha um `if provider.needs_api_key` que mandava sempre "" pro
+    # build_chat_model, mesmo com uma chave configurada e válida. O
+    # "Testar provider" (routers/config.py) já usava o caminho certo, então
+    # esse bug só aparecia numa run de verdade, nunca no botão de teste.
+    set_secret_plain("ollama_api_key", "meu-bearer-token-secreto")
+    store.set_setting("ollama_base_url", "http://localhost:11434")
+
+    captured_api_keys = []
+
+    def _fake_build_chat_model(_provider_id, _model, api_key, **_kwargs):
+        captured_api_keys.append(api_key)
+        return object()
+
+    async def _fake_pass_step(**_kwargs):
+        return True, "ok"
+
+    monkeypatch.setattr("src.agent.nodes.build_chat_model", _fake_build_chat_model)
+    monkeypatch.setattr("src.agent.nodes.run_step", _fake_pass_step)
+
+    run = store.create_run(
+        platform="web", app_url=FIXTURE_URL,
+        bdd_script="# language: pt\nFuncionalidade: X\n  Cenario: Y\n    Dado algo\n",
+        llm_provider="ollama", llm_model="qwen3-coder:30b",
+    )
+
+    await run_graph(run.id)
+
+    assert captured_api_keys == ["meu-bearer-token-secreto"]
