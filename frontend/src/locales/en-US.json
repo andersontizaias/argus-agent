@@ -1,0 +1,29 @@
+{
+  "nav": {
+    "runs": "Runs",
+    "newRun": "New Run",
+    "config": "Configuration"
+  },
+  "health": {
+    "title": "Environment",
+    "ok": "ok",
+    "degraded": "degraded"
+  },
+  "config": {
+    "title": "Configuration",
+    "subtitle": "LLM provider keys and local endpoints (Ollama / custom).",
+    "providers": "LLM Providers",
+    "testProvider": "Test provider",
+    "testing": "Testing...",
+    "save": "Save",
+    "saving": "Saving...",
+    "saved": "Configuration saved successfully.",
+    "defaultProvider": "Default provider",
+    "defaultModel": "Default model",
+    "apiKey": "API key",
+    "baseUrl": "Base URL",
+    "notConfigured": "Not configured",
+    "testOk": "Connection ok",
+    "testFail": "Connection failed"
+  }
+}

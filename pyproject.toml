@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[project]
+name = "argus-agent"
+version = "0.1.0"
+description = "Argus Agent — agente de QA autônomo (web, Android, iOS) powered by LangGraph"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.139.2",
+    "uvicorn[standard]>=0.51.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
+    "argon2-cffi>=23.1.0",
+    "cryptography>=42.0.0",
+    "structlog>=26.1.0",
+    "requests>=2.32.0",
+    "langgraph>=0.2.0",
+    "langgraph-checkpoint-sqlite>=2.0.0",
+    "langchain>=0.3.0",
+    "langchain-core>=0.3.0",
+    "langchain-anthropic>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "langchain-google-genai>=2.0.0",
+    "langchain-groq>=0.2.0",
+    "playwright>=1.48.0",
+    "Appium-Python-Client>=4.0.0",
+    "gherkin-official>=29.0.0",
+    "jinja2>=3.1.0",
+    "mcp>=1.2.0",
+    "a2a-sdk>=0.2.0",
+]
+
+[project.scripts]
+argus = "src.main:start"
+argus-worker = "src.worker:start"
+argus-doctor = "src.doctor:start"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.0",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.16.0",
+]
+
+[tool.ruff.lint]
+ignore = [
+    "BLE001",  # blind-except — caminhos de telemetria/cleanup best-effort não podem propagar falha secundária
+    "S110",    # try-except-pass — mesma razão (ex.: publish de evento nunca derruba a escrita que ele reporta)
+    "S112",    # try-except-continue — idem, para loops "tenta cada candidato até um funcionar"
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# B008 senão marca toda rota FastAPI com `= Depends(...)` — é assim que a
+# injeção de dependência do FastAPI funciona, não um mutable-default bug.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Cookie", "fastapi.Path", "fastapi.Body"]
+
+[tool.coverage.run]
+source = ["src"]
+
+[tool.coverage.report]
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "def start\\(\\):",
+]

@@ -1,0 +1,29 @@
+{
+  "nav": {
+    "runs": "Execuções",
+    "newRun": "Nova Execução",
+    "config": "Configuração"
+  },
+  "health": {
+    "title": "Ambiente",
+    "ok": "ok",
+    "degraded": "degradado"
+  },
+  "config": {
+    "title": "Configuração",
+    "subtitle": "Chaves de provider LLM e endpoints locais (Ollama / custom).",
+    "providers": "Providers LLM",
+    "testProvider": "Testar provider",
+    "testing": "Testando...",
+    "save": "Salvar",
+    "saving": "Salvando...",
+    "saved": "Configuração salva com sucesso.",
+    "defaultProvider": "Provider default",
+    "defaultModel": "Modelo default",
+    "apiKey": "Chave de API",
+    "baseUrl": "Base URL",
+    "notConfigured": "Não configurado",
+    "testOk": "Conexão ok",
+    "testFail": "Falha na conexão"
+  }
+}

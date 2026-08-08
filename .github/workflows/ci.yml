@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Backend: tests + coverage gate ──────────────────────────
+  # fail_under=90 é aplicado por pyproject.toml's [tool.coverage.report] —
+  # `uv run pytest` já sai não-zero sozinho se a cobertura cair abaixo disso.
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      # Gerada nova a cada run em vez de um valor estático neste arquivo —
+      # uma chave Fernet fixa aqui dispara a regra de entropia genérica do
+      # gitleaks (falso positivo real, mesmo caso do phalanx-agents).
+      - name: Gerar ARGUS_SECRET_KEY efêmera só para teste
+        run: echo "ARGUS_SECRET_KEY=$(uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
+      - run: uv run playwright install --with-deps chromium
+      # frontend/dist não existe neste job (só frontend-tests builda, em outro
+      # runner sem filesystem compartilhado) — um stub mínimo (com img/logo.png)
+      # é suficiente pra exercitar o mount/serve real do FastAPI que os testes
+      # de main.py checam (status code, content-type, fallback do SPA).
+      - run: |
+          mkdir -p frontend/dist/assets frontend/dist/img
+          echo '<!doctype html><html><body><div id="root"></div></body></html>' > frontend/dist/index.html
+          printf '\x89PNG\r\n\x1a\n' > frontend/dist/img/logo.png
+      - run: uv run alembic upgrade head
+        env:
+          ARGUS_DB_PATH: /tmp/argus-ci-migration-check.db
+      - run: uv run pytest --cov --cov-report=xml --cov-report=term-missing
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: backend-coverage
+          path: coverage.xml
+
+  # ─── Backend: lint + type-check ────────────────────────────────
+  backend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - run: uv run ruff check src tests
+      - run: uv run mypy src
+
+  # ─── Frontend: typecheck, lint, build, tests + coverage gate ───
+  frontend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run test:coverage
+
+  # ─── Cyclomatic complexity gate ────────────────────────────────
+  complexity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - run: uvx xenon --max-absolute D --max-modules B --max-average B src
+
+  # ─── Duplication gate ───────────────────────────────────────────
+  duplication:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - run: npx --yes jscpd@5 src frontend/src --threshold 10 --reporters console
+
+  # ─── SCA: dependências Python ────────────────────────────────────
+  sca-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - run: uvx pip-audit --path .venv/lib/python3.12/site-packages
+
+  # ─── SCA: dependências frontend ──────────────────────────────────
+  sca-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm audit --audit-level=high
+
+  # ─── Secrets scan ─────────────────────────────────────────────────
+  gitleaks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── SBOM ───────────────────────────────────────────────────────
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: anchore/sbom-action@v0.24.0
+        with:
+          output-file: sbom.spdx.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: sbom.spdx.json
