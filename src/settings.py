@@ -1,10 +1,24 @@
 """Argus Agent — configuração de ambiente e paths."""
 import os
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def _read_version() -> str:
+    """Fonte única de verdade: o `version` do pyproject.toml, lido via
+    metadata do pacote instalado (hatchling registra isso no build feito
+    por `uv sync`) — nunca duplicado à mão em main.py/release.yml/UI."""
+    try:
+        return version("argus-agent")
+    except PackageNotFoundError:  # pragma: no cover — só em ambiente sem `uv sync`
+        return "0.0.0-dev"
+
+
+VERSION = _read_version()
 
 
 def artifacts_dir() -> Path:

@@ -12,7 +12,9 @@ def test_health_ok_when_all_checks_pass(monkeypatch):
     with TestClient(app) as client:
         resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.json()["status"] == "ok"
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["version"]  # veio do pyproject.toml via importlib.metadata, nunca hardcoded
 
 
 def test_health_degraded_when_a_check_fails(monkeypatch):

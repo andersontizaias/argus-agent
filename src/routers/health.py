@@ -5,6 +5,7 @@ import asyncio
 from fastapi import APIRouter, Response
 
 from src.doctor import run_checks
+from src.settings import VERSION
 
 router = APIRouter()
 
@@ -19,5 +20,6 @@ async def health(response: Response):
     response.status_code = 200 if healthy else 503
     return {
         "status": "ok" if healthy else "degraded",
+        "version": VERSION,
         "checks": [{"name": c.name, "ok": c.ok, "detail": c.detail} for c in checks],
     }

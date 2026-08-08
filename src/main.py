@@ -14,7 +14,7 @@ from src.routers import api_keys as api_keys_router
 from src.routers import config as config_router
 from src.routers import health as health_router
 from src.routers import runs as runs_router
-from src.settings import HOST, PORT
+from src.settings import HOST, PORT, VERSION
 
 BASE_DIR = Path(__file__).parent.parent
 FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Argus Agent",
     description="Agente de QA autônomo — web, Android e iOS",
-    version="0.1.0",
+    version=VERSION,
     lifespan=lifespan,
 )
 
