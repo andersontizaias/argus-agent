@@ -56,3 +56,8 @@ IS_LOOPBACK = HOST in ("127.0.0.1", "localhost", "::1")
 ANDROID_AVD_NAME = os.getenv("ARGUS_ANDROID_AVD", "Pixel_9a")
 ANDROID_EMULATOR_PORT = int(os.getenv("ARGUS_ANDROID_EMULATOR_PORT", "5554"))
 APPIUM_PORT = int(os.getenv("APPIUM_BASE_PORT", "4723"))
+
+# Nome do simulador iOS (precisa existir no Xcode — Window > Devices and
+# Simulators); a runtime/versão de iOS é resolvida automaticamente pra mais
+# recente instalada com esse nome de aparelho, ver device_ios.find_simulator.
+IOS_DEVICE_NAME = os.getenv("ARGUS_IOS_DEVICE", "iPhone 15")

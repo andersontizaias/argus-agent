@@ -162,12 +162,12 @@ async def test_run_with_missing_placeholder_data_marks_run_as_error():
 
 
 async def test_run_with_unsupported_platform_marks_run_as_error():
-    # "android" ganhou suporte nesta fase (F3) — "ios" é a próxima
-    # plataforma ainda não implementada (F4), então é ela que exercita o
-    # branch de "plataforma não suportada" agora.
+    # web/android/ios são as 3 plataformas suportadas — o router já rejeita
+    # qualquer outra (ver test_routers_runs.py), mas `store.create_run` não
+    # valida por conta própria, então esse teste prova o fallback
+    # defensivo de `provision_target` direto, sem depender do router.
     run = store.create_run(
-        platform="ios",
-        binary_url="https://example.com/app.zip",
+        platform="desktop",
         bdd_script="# language: pt\nFuncionalidade: X\n  Cenário: Y\n    Dado algo\n",
     )
 
@@ -175,7 +175,7 @@ async def test_run_with_unsupported_platform_marks_run_as_error():
 
     final_run = store.get_run(run.id)
     assert final_run.status == "error"
-    assert "ios" in final_run.error
+    assert "desktop" in final_run.error
 
 
 async def test_cancel_requested_before_scenario_marks_it_skipped(monkeypatch, _configure_provider):
@@ -351,3 +351,137 @@ async def test_android_provisioning_failure_marks_run_as_error_not_failed(monkey
     final_run = store.get_run(run.id)
     assert final_run.status == "error"
     assert "Falha ao provisionar o dispositivo Android" in final_run.error
+
+
+async def test_ios_run_provisions_and_tears_down_with_mocked_device_layer(monkeypatch, _configure_provider):
+    """Equivalente iOS do teste android acima: prova a orquestração de
+    provisionamento/teardown (baixa o .zip → extrai/valida o .app → boota/
+    reusa o simulador → sobe o Appium → abre a sessão do driver → roda o
+    cenário → teardown fecha driver+Appium sem derrubar o simulador
+    compartilhado) com a camada de dispositivo mockada."""
+    from src.agent import nodes as nodes_module
+    from src.tools.appium_server import AppiumHandle
+    from src.tools.device_ios import SimulatorHandle
+
+    async def _fake_fetch_binary(_url, _secret, dest_path, **_kw):
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        dest_path.write_bytes(b"fake-zip-content")
+        return dest_path
+
+    fake_app_path = Path("/tmp/fake-extracted/Payload/App.app")
+    fake_simulator = SimulatorHandle(device_name="iPhone 15", udid="AAAA-BOOTED")
+    fake_appium = AppiumHandle(port=4723, process=None)
+
+    class _FakeDriver:
+        capabilities: ClassVar = {}
+        quit_called = False
+
+        def quit(self):
+            _FakeDriver.quit_called = True
+
+        def terminate_app(self, _app_id):
+            pass
+
+        def activate_app(self, _app_id):
+            pass
+
+        def save_screenshot(self, path):
+            Path(path).write_bytes(b"fake-png")
+            return True
+
+    calls = {"boot_simulator": 0, "stop_appium": 0, "shutdown_simulator": 0}
+
+    async def _fake_boot_simulator(*_a, **_kw):
+        calls["boot_simulator"] += 1
+        return fake_simulator
+
+    async def _fake_is_alive(_udid):
+        return True
+
+    async def _fake_shutdown_simulator(_handle):
+        calls["shutdown_simulator"] += 1
+
+    async def _fake_start_appium(*_a, **_kw):
+        return fake_appium
+
+    async def _fake_stop_appium(_handle):
+        calls["stop_appium"] += 1
+
+    async def _fake_pass_step(**_kwargs):
+        return True, "ok"
+
+    monkeypatch.setattr(nodes_module, "fetch_binary", _fake_fetch_binary)
+    # extract_ios_app/validate_simulator_app/bundle_id_from_app são síncronas
+    # de verdade — trocadas por lambdas simples em vez de recriar o .zip.
+    monkeypatch.setattr(nodes_module, "extract_ios_app", lambda _zip, _dest: fake_app_path)
+    monkeypatch.setattr(nodes_module, "validate_simulator_app", lambda _path: None)
+    monkeypatch.setattr(nodes_module, "bundle_id_from_app", lambda _path: "com.example.App")
+    monkeypatch.setattr(nodes_module.device_ios, "boot_simulator", _fake_boot_simulator)
+    monkeypatch.setattr(nodes_module.device_ios, "is_alive", _fake_is_alive)
+    monkeypatch.setattr(nodes_module.device_ios, "shutdown_simulator", _fake_shutdown_simulator)
+    monkeypatch.setattr(nodes_module, "start_appium", _fake_start_appium)
+    monkeypatch.setattr(nodes_module, "stop_appium", _fake_stop_appium)
+    monkeypatch.setattr(nodes_module.webdriver, "Remote", lambda *_a, **_kw: _FakeDriver())
+    monkeypatch.setattr(nodes_module, "run_step", _fake_pass_step)
+    # o simulador compartilhado é estado de módulo — garante que este teste
+    # não herda (nem vaza) um handle de outro teste rodando na mesma sessão.
+    monkeypatch.setattr(nodes_module, "_SHARED_SIMULATOR", None)
+
+    run = store.create_run(
+        platform="ios", binary_url="https://example.com/app.zip",
+        bdd_script="# language: pt\nFuncionalidade: X\n  Cenario: Y\n    Dado algo\n",
+        llm_provider=_configure_provider.id, llm_model=_configure_provider.example_model,
+    )
+
+    await run_graph(run.id)
+
+    final_run = store.get_run(run.id)
+    assert final_run.status == "passed"
+    assert calls["boot_simulator"] == 1
+    assert calls["stop_appium"] == 1
+    assert calls["shutdown_simulator"] == 0  # simulador fica de pé pra reuso
+    assert _FakeDriver.quit_called is True
+
+
+async def test_ios_run_without_binary_url_marks_run_as_error():
+    run = store.create_run(
+        platform="ios",
+        bdd_script="# language: pt\nFuncionalidade: X\n  Cenário: Y\n    Dado algo\n",
+    )
+
+    await run_graph(run.id)
+
+    final_run = store.get_run(run.id)
+    assert final_run.status == "error"
+    assert "binary_url" in final_run.error
+
+
+async def test_ios_rejects_device_build_at_provisioning(monkeypatch):
+    # Regressão do caso real investigado ao vivo: um .ipa/zip de DEVICE
+    # (CFBundleSupportedPlatforms=iPhoneOS) precisa dar erro claro na hora
+    # do provisionamento, não uma falha críptica dentro do simctl install.
+    from src.agent import nodes as nodes_module
+    from src.tools.binary_fetch import BinaryFetchError
+
+    async def _fake_fetch_binary(_url, _secret, dest_path, **_kw):
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        dest_path.write_bytes(b"fake-zip-content")
+        return dest_path
+
+    def _fake_validate_simulator_app_rejects(_path):
+        raise BinaryFetchError("'App.app' não é um build de SIMULADOR (CFBundleSupportedPlatforms=['iPhoneOS'])")
+
+    monkeypatch.setattr(nodes_module, "fetch_binary", _fake_fetch_binary)
+    monkeypatch.setattr(nodes_module, "extract_ios_app", lambda _zip, _dest: Path("/tmp/App.app"))
+    monkeypatch.setattr(nodes_module, "validate_simulator_app", _fake_validate_simulator_app_rejects)
+
+    run = store.create_run(
+        platform="ios", binary_url="https://example.com/device-build.ipa",
+        bdd_script="# language: pt\nFuncionalidade: X\n  Cenário: Y\n    Dado algo\n",
+    )
+
+    await run_graph(run.id)
+
+    final_run = store.get_run(run.id)
+    assert final_run.status == "error"
+    assert "não é um build de SIMULADOR" in final_run.error

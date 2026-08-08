@@ -115,6 +115,47 @@ def _session(tmp_path, elements=None) -> tuple[MobileSession, _FakeDriver]:
     return session, driver
 
 
+class _FakeIOSElement:
+    def __init__(self, *, tag_name="XCUIElementTypeButton", label="", name="", value="",
+                 enabled="true", displayed=True, element_id="el-1"):
+        self.id = element_id
+        self.tag_name = tag_name
+        self._attrs = {"label": label, "name": name, "value": value, "enabled": enabled}
+        self.text = ""
+        self._displayed = displayed
+        self.clicked = False
+        self.sent_keys: str | None = None
+        self.stale = False
+
+    def is_displayed(self):
+        if self.stale:
+            raise StaleElementReferenceException("stale")
+        return self._displayed
+
+    def get_attribute(self, key):
+        if self.stale:
+            raise StaleElementReferenceException("stale")
+        return self._attrs.get(key)
+
+    def click(self):
+        if self.stale:
+            raise StaleElementReferenceException("stale")
+        self.clicked = True
+
+    def send_keys(self, text):
+        if self.stale:
+            raise StaleElementReferenceException("stale")
+        self.sent_keys = text
+
+
+def _ios_session(tmp_path, elements=None) -> tuple[MobileSession, _FakeDriver]:
+    driver = _FakeDriver(elements=elements)
+    session = MobileSession(
+        driver=driver, app_package="com.example.App", run_id="test-run", artifacts_dir=tmp_path, platform="ios"
+    )
+    return session, driver
+
+
 async def test_snapshot_lists_visible_elements_with_role_and_name(tmp_path):
     button = _FakeElement(class_name="android.widget.Button", content_desc="Entrar")
     session, _ = _session(tmp_path, [button])
@@ -348,3 +389,91 @@ async def test_tool_mobile_screenshot(tmp_path):
     tool = await _find_tool(session, "mobile_screenshot")
     result = await tool.ainvoke({"label": "evidencia"})
     assert "Screenshot salva" in result
+
+
+# ─── iOS (XCUITest) — atributos/gestos são bem diferentes do Android ────────
+
+
+async def test_ios_snapshot_uses_label_name_value_and_tag_as_role(tmp_path):
+    button = _FakeIOSElement(tag_name="XCUIElementTypeButton", label="Entrar")
+    session, _ = _ios_session(tmp_path, [button])
+    text = await session.snapshot_text()
+    assert 'button "Entrar"' in text
+    assert "App: com.example.App" in text  # sem current_activity no iOS
+
+
+async def test_ios_snapshot_falls_back_to_name_then_value_for_text(tmp_path):
+    static_text = _FakeIOSElement(tag_name="XCUIElementTypeStaticText", name="Bem-vindo", element_id="el-1")
+    field = _FakeIOSElement(tag_name="XCUIElementTypeTextField", value="usuario123", element_id="el-2")
+    session, _ = _ios_session(tmp_path, [static_text, field])
+    text = await session.snapshot_text()
+    assert 'text "Bem-vindo"' in text
+    assert 'textbox "usuario123"' in text
+
+
+async def test_ios_snapshot_skips_stale_elements_without_crashing(tmp_path):
+    stale = _FakeIOSElement(label="Vai sumir")
+    stale.stale = True
+    ok = _FakeIOSElement(label="Normal", element_id="el-2")
+    session, _ = _ios_session(tmp_path, [stale, ok])
+    text = await session.snapshot_text()
+    assert "Normal" in text
+    assert "Vai sumir" not in text
+
+
+async def test_ios_long_press_uses_touch_and_hold_gesture(tmp_path):
+    el = _FakeIOSElement(label="Item")
+    session, driver = _ios_session(tmp_path, [el])
+    await session.snapshot_text()
+    await session.long_press("e1")
+    assert driver.executed[0][0] == "mobile: touchAndHold"
+    assert driver.executed[0][1]["elementId"] == el.id
+    assert driver.executed[0][1]["duration"] == 1.0
+
+
+async def test_ios_press_back_raises_mobile_tool_error(tmp_path):
+    # iOS não tem back de sistema — diferente do Android, isso é um erro
+    # claro pro agente tentar outra abordagem (tocar num botão na tela).
+    session, driver = _ios_session(tmp_path, [])
+    with pytest.raises(MobileToolError, match="não tem um botão de voltar"):
+        await session.press_back()
+    assert driver.went_back is False
+
+
+async def test_tool_mobile_press_back_on_ios_returns_error_text_not_raises(tmp_path):
+    session, _ = _ios_session(tmp_path, [])
+    tool = await _find_tool(session, "mobile_press_back")
+    result = await tool.ainvoke({})
+    assert "não tem um botão de voltar" in result
+
+
+async def test_ios_wait_for_matches_name_label_or_value(tmp_path):
+    session, driver = _ios_session(tmp_path, [])
+    driver.wait_for_elements = [[_FakeIOSElement(label="Bem-vindo")]]
+    result = await session.wait_for("Bem-vindo", timeout_ms=1000)
+    assert "apareceu" in result
+
+
+async def test_ios_scroll_to_returns_immediately_when_already_visible(tmp_path):
+    session, driver = _ios_session(tmp_path, [])
+    driver.wait_for_elements = [[_FakeIOSElement(label="Produtos")]]
+    result = await session.scroll_to("Produtos")
+    assert 'Rolou até "Produtos"' in result
+    assert driver.executed == []  # nem precisou dar scroll
+
+
+async def test_ios_scroll_to_scrolls_until_found(tmp_path):
+    session, driver = _ios_session(tmp_path, [])
+    driver.wait_for_elements = [[], [], [_FakeIOSElement(label="Produtos")]]
+    result = await session.scroll_to("Produtos")
+    assert 'Rolou até "Produtos"' in result
+    assert len(driver.executed) == 2  # 2 scrolls antes de achar na 3ª checagem
+    assert all(name == "mobile: scroll" for name, _args in driver.executed)
+
+
+async def test_ios_scroll_to_raises_after_max_attempts(tmp_path):
+    session, driver = _ios_session(tmp_path, [])
+    driver.wait_for_elements = [[]] * 6
+    driver.find_element_error = NoSuchElementException("not found")
+    with pytest.raises(MobileToolError, match="Não consegui rolar"):
+        await session.scroll_to("Nunca aparece")

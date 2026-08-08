@@ -15,6 +15,7 @@ from collections.abc import Callable
 
 from appium import webdriver
 from appium.options.android import UiAutomator2Options
+from appium.options.ios import XCUITestOptions
 from playwright.async_api import Browser, BrowserContext, Playwright, async_playwright
 
 from src import store
@@ -33,12 +34,20 @@ from src.settings import (
     ANDROID_AVD_NAME,
     ANDROID_EMULATOR_PORT,
     APPIUM_PORT,
+    IOS_DEVICE_NAME,
     artifacts_dir,
 )
-from src.tools import device_android
+from src.tools import device_android, device_ios
 from src.tools.appium_server import AppiumHandle, start_appium, stop_appium
-from src.tools.binary_fetch import fetch_binary, validate_apk
+from src.tools.binary_fetch import (
+    bundle_id_from_app,
+    extract_ios_app,
+    fetch_binary,
+    validate_apk,
+    validate_simulator_app,
+)
 from src.tools.device_android import EmulatorHandle
+from src.tools.device_ios import SimulatorHandle
 from src.tools.mobile import MobileSession, build_mobile_tools
 from src.tools.web import WebSession, build_web_tools
 from src.user_secrets import get_secret_plain
@@ -51,13 +60,16 @@ logger = logging.getLogger(__name__)
 # reprovisiona do zero numa retomada.
 _SESSIONS: dict[str, "_RunResources"] = {}
 
-# O emulador Android é caro de bootar (dezenas de segundos) e fica
-# COMPARTILHADO entre runs — não é fechado no teardown de uma run individual,
-# só quando fica não-saudável (ver `_acquire_emulator`). O worker processa
-# uma run de cada vez (ver src/worker.py), então um único emulador
-# compartilhado basta e evita rebootar a cada run android.
+# Emulador Android e simulador iOS são caros de bootar (dezenas de
+# segundos) e ficam COMPARTILHADOS entre runs — não são fechados no
+# teardown de uma run individual, só quando ficam não-saudáveis (ver
+# `_acquire_emulator`/`_acquire_simulator`). O worker processa uma run de
+# cada vez (ver src/worker.py), então um único dispositivo compartilhado
+# por plataforma basta e evita rebootar a cada run.
 _SHARED_EMULATOR: EmulatorHandle | None = None
 _EMULATOR_LOCK = asyncio.Lock()
+_SHARED_SIMULATOR: SimulatorHandle | None = None
+_SIMULATOR_LOCK = asyncio.Lock()
 
 
 class _RunResources:
@@ -88,10 +100,11 @@ async def _safe_close_web(resources: "_RunResources") -> None:
         logger.warning("Falha ao parar o playwright: %s", e)
 
 
-async def _safe_close_android(resources: "_RunResources") -> None:
+async def _safe_close_mobile(resources: "_RunResources") -> None:
     """Fecha a sessão do driver Appium e derruba o servidor Appium desta
-    run — o EMULADOR fica de pé (`_SHARED_EMULATOR`), pra ser reusado pela
-    próxima run android sem pagar o custo de boot de novo."""
+    run — o EMULADOR/SIMULADOR fica de pé (`_SHARED_EMULATOR`/
+    `_SHARED_SIMULATOR`), pra ser reusado pela próxima run mobile sem pagar
+    o custo de boot de novo. Comum a Android e iOS — os dois falam Appium."""
     try:
         if resources.mobile_session:
             await asyncio.to_thread(resources.mobile_session.driver.quit)
@@ -120,13 +133,15 @@ async def _reset_app_state(resources: "_RunResources", app_url: str | None) -> N
         await old_context.close()
 
 
-async def _reset_android_app_state(session: MobileSession) -> None:
+async def _reset_mobile_app_state(session: MobileSession) -> None:
     """Cada cenário reabre o app do zero — mais simples que uma limpeza
-    completa de dados (`mobile: clearApp`, que também derruba permissões
-    concedidas e efetivamente reinstalaria o app a cada cenário). Não limpa
+    completa de dados (`mobile: clearApp` no Android; não existe
+    equivalente direto no XCUITest), que também derrubaria permissões
+    concedidas e efetivamente reinstalaria o app a cada cenário. Não limpa
     dados em disco entre cenários; suficiente pro MVP, documentado como
     limitação conhecida caso vire um problema real com apps que persistem
-    estado entre aberturas."""
+    estado entre aberturas. `terminate_app`/`activate_app` são chamadas
+    genéricas do client Appium — funcionam igual em Android e iOS."""
     await asyncio.to_thread(session.driver.terminate_app, session.app_package)
     await asyncio.to_thread(session.driver.activate_app, session.app_package)
 
@@ -166,7 +181,9 @@ async def provision_target(state: RunState) -> RunState:
         return await _provision_web(state, run_id, run)
     if run.platform == "android":
         return await _provision_android(state, run_id, run)
-    return _fail(state, run_id, f"Plataforma '{run.platform}' ainda não suportada nesta fase (só 'web' e 'android').")
+    if run.platform == "ios":
+        return await _provision_ios(state, run_id, run)
+    return _fail(state, run_id, f"Plataforma '{run.platform}' não suportada.")
 
 
 async def _provision_web(state: RunState, run_id: str, run) -> RunState:
@@ -232,11 +249,63 @@ async def _provision_android(state: RunState, run_id: str, run) -> RunState:
         driver = await asyncio.to_thread(webdriver.Remote, resources.appium.url, options=options)
         app_package = str(driver.capabilities.get("appPackage") or "")
         resources.mobile_session = MobileSession(
-            driver=driver, app_package=app_package, run_id=run_id, artifacts_dir=run_dir
+            driver=driver, app_package=app_package, run_id=run_id, artifacts_dir=run_dir, platform="android"
         )
     except Exception as e:
-        await _safe_close_android(resources)
+        await _safe_close_mobile(resources)
         return _fail(state, run_id, f"Falha ao provisionar o dispositivo Android: {e}")
+
+    _SESSIONS[run_id] = resources
+    store.update_run_status(run_id, "running", started_at=True)
+    publish_event(run_id, "run_running", {})
+    return state
+
+
+async def _acquire_simulator() -> SimulatorHandle:
+    """Reusa o simulador compartilhado se ainda estiver saudável; senão
+    boota um novo — mesma mitigação de risco do `_acquire_emulator`,
+    aplicada ao lado iOS."""
+    global _SHARED_SIMULATOR
+    async with _SIMULATOR_LOCK:
+        if _SHARED_SIMULATOR is not None and await device_ios.is_alive(_SHARED_SIMULATOR.udid):
+            return _SHARED_SIMULATOR
+        if _SHARED_SIMULATOR is not None:
+            await device_ios.shutdown_simulator(_SHARED_SIMULATOR)
+        _SHARED_SIMULATOR = await device_ios.boot_simulator(IOS_DEVICE_NAME)
+        return _SHARED_SIMULATOR
+
+
+async def _provision_ios(state: RunState, run_id: str, run) -> RunState:
+    if not run.binary_url:
+        return _fail(state, run_id, "Run ios sem binary_url (precisa apontar pro .zip do build de simulador).")
+
+    run_dir = artifacts_dir() / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = run_dir / "app.zip"
+
+    resources = _RunResources()
+    try:
+        await fetch_binary(run.binary_url, run.binary_auth_secret, zip_path)
+        app_path = extract_ios_app(zip_path, run_dir / "extracted")
+        validate_simulator_app(app_path)
+        bundle_id = bundle_id_from_app(app_path)
+
+        simulator = await _acquire_simulator()
+        resources.appium = await start_appium(APPIUM_PORT)
+
+        options = XCUITestOptions()
+        options.udid = simulator.udid
+        options.app = str(app_path)
+        options.automation_name = "XCUITest"
+        options.new_command_timeout = 300
+
+        driver = await asyncio.to_thread(webdriver.Remote, resources.appium.url, options=options)
+        resources.mobile_session = MobileSession(
+            driver=driver, app_package=bundle_id, run_id=run_id, artifacts_dir=run_dir, platform="ios"
+        )
+    except Exception as e:
+        await _safe_close_mobile(resources)
+        return _fail(state, run_id, f"Falha ao provisionar o simulador iOS: {e}")
 
     _SESSIONS[run_id] = resources
     store.update_run_status(run_id, "running", started_at=True)
@@ -273,7 +342,7 @@ async def run_scenarios(state: RunState) -> RunState:
             return build_mobile_tools(mobile_session)
 
         async def reset_between_scenarios() -> None:
-            await _reset_android_app_state(mobile_session)
+            await _reset_mobile_app_state(mobile_session)
     else:
         return state  # provision_target já falhou — nada a fazer aqui
 
@@ -360,7 +429,7 @@ async def teardown_target(state: RunState) -> RunState:
     if resources.web_session is not None:
         await _safe_close_web(resources)
     elif resources.mobile_session is not None:
-        await _safe_close_android(resources)
+        await _safe_close_mobile(resources)
     return state
 
 

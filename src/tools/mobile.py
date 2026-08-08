@@ -1,4 +1,5 @@
-"""Argus Agent — tools Appium para o executor do agente mobile (Android).
+"""Argus Agent — tools Appium para o executor do agente mobile (Android via
+UiAutomator2, iOS via XCUITest).
 
 Espelha o design de `src/tools/web.py`: `MobileSession.snapshot_text()` é a
 tool central — em vez de mandar screenshots pro LLM, varre a árvore nativa
@@ -6,18 +7,28 @@ via XPath e devolve uma lista textual compacta de elementos visíveis, cada
 um com uma ref curta (`e3`); ações então miram por ref. A diferença pro lado
 web é como a ref é resolvida: o DOM permite tagear elementos com um atributo
 (`data-argus-ref`) que sobrevive entre chamadas de `evaluate()`; uma árvore
-de acessibilidade nativa Android não tem esse gancho, então aqui a ref
-aponta pra um `WebElement` do Appium cacheado em memória (`self._elements`),
-válido só até a PRÓXIMA chamada de snapshot ou até a tela mudar (nesse caso
-o elemento fica "stale" e a ação seguinte falha com uma mensagem clara pra
-tirar um snapshot novo — mesmo contrato de "ref pode expirar" do lado web)."""
+de acessibilidade nativa não tem esse gancho, então aqui a ref aponta pra um
+`WebElement` do Appium cacheado em memória (`self._elements`), válido só até
+a PRÓXIMA chamada de snapshot ou até a tela mudar (nesse caso o elemento
+fica "stale" e a ação seguinte falha com uma mensagem clara pra tirar um
+snapshot novo — mesmo contrato de "ref pode expirar" do lado web).
+
+Android (UiAutomator2) e iOS (XCUITest) falam protocolos de acessibilidade
+BEM diferentes — nomes de atributo, tipos de elemento, gestos nomeados
+("mobile: X") não têm equivalência 1:1. Em vez de duas classes paralelas
+(muita duplicação pras ~80% das tools que são idênticas — tap/type/wait_for/
+screenshot/launch/terminate), `MobileSession` recebe um `platform` e os
+poucos pontos que realmente divergem (`_collect_elements`, `long_press`,
+`scroll_to`, `press_back`, `wait_for`) branch internamente. `swipe` é a
+única ação de gesto que É genérica (usa W3C Actions puro, sem comando
+nomeado por plataforma)."""
 from __future__ import annotations
 
 import asyncio
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from appium.webdriver.common.appiumby import AppiumBy
 from appium.webdriver.webdriver import WebDriver
@@ -28,14 +39,17 @@ from selenium.common.exceptions import (
     WebDriverException,
 )
 
-# XPath roda contra o page_source cru (dump XML do UiAutomator) — os nomes de
-# atributo aqui são os do XML (com hífen), não os aceitos por `get_attribute`
-# depois de já ter o elemento (esses usam camelCase, ver `_ATTR_*` abaixo).
-_INTERACTIVE_XPATH = "//*[@clickable='true' or @long-clickable='true' or @checkable='true']"
-_INFO_XPATH = "//*[@text!='' or @content-desc!='']"
-_SNAPSHOT_XPATH = f"({_INTERACTIVE_XPATH}) | ({_INFO_XPATH})"
+Platform = Literal["android", "ios"]
 
-_CLASS_ROLE_MAP = {
+# ─── Android (UiAutomator2): XPath roda contra o page_source cru (dump XML
+# do UiAutomator) — os nomes de atributo aqui são os do XML (com hífen), não
+# os aceitos por `get_attribute` depois de já ter o elemento (esses usam
+# camelCase). ────────────────────────────────────────────────────────────
+_ANDROID_INTERACTIVE_XPATH = "//*[@clickable='true' or @long-clickable='true' or @checkable='true']"
+_ANDROID_INFO_XPATH = "//*[@text!='' or @content-desc!='']"
+_ANDROID_SNAPSHOT_XPATH = f"({_ANDROID_INTERACTIVE_XPATH}) | ({_ANDROID_INFO_XPATH})"
+
+_ANDROID_CLASS_ROLE_MAP = {
     "android.widget.Button": "button",
     "android.widget.ImageButton": "button",
     "android.widget.EditText": "textbox",
@@ -47,10 +61,42 @@ _CLASS_ROLE_MAP = {
 }
 
 
-def _role_for(class_name: str, clickable: bool) -> str:
-    if class_name in _CLASS_ROLE_MAP:
-        return _CLASS_ROLE_MAP[class_name]
+def _android_role_for(class_name: str, clickable: bool) -> str:
+    if class_name in _ANDROID_CLASS_ROLE_MAP:
+        return _ANDROID_CLASS_ROLE_MAP[class_name]
     return "button" if clickable else "generic"
+
+
+# ─── iOS (XCUITest): não existe um atributo "clickable" — interatividade é
+# implícita no TIPO do elemento (a tag XML É o tipo, ex.: XCUIElementTypeButton).
+# ────────────────────────────────────────────────────────────────────────
+_IOS_INTERACTIVE_TYPES = (
+    "XCUIElementTypeButton", "XCUIElementTypeTextField", "XCUIElementTypeSecureTextField",
+    "XCUIElementTypeSwitch", "XCUIElementTypeLink", "XCUIElementTypeCell",
+    "XCUIElementTypeSegmentedControl", "XCUIElementTypeSlider", "XCUIElementTypeSearchField",
+    "XCUIElementTypePickerWheel", "XCUIElementTypeKey",
+)
+_IOS_SNAPSHOT_XPATH = " | ".join(f"//{t}" for t in _IOS_INTERACTIVE_TYPES) + \
+    ' | //XCUIElementTypeStaticText[@name!="" or @label!=""]'
+
+_IOS_TYPE_ROLE_MAP = {
+    "XCUIElementTypeButton": "button",
+    "XCUIElementTypeTextField": "textbox",
+    "XCUIElementTypeSecureTextField": "textbox",
+    "XCUIElementTypeSearchField": "textbox",
+    "XCUIElementTypeSwitch": "switch",
+    "XCUIElementTypeLink": "link",
+    "XCUIElementTypeCell": "cell",
+    "XCUIElementTypeSegmentedControl": "segmented",
+    "XCUIElementTypeSlider": "slider",
+    "XCUIElementTypePickerWheel": "picker",
+    "XCUIElementTypeKey": "key",
+    "XCUIElementTypeStaticText": "text",
+}
+
+
+def _ios_role_for(element_type: str) -> str:
+    return _IOS_TYPE_ROLE_MAP.get(element_type, "generic")
 
 
 class MobileToolError(RuntimeError):
@@ -61,15 +107,17 @@ class MobileToolError(RuntimeError):
 
 @dataclass
 class MobileSession:
-    """Estado vivo de uma run android: driver Appium + package do app sob
-    teste (usado por launch/terminate) + onde salvar screenshots. Não é
-    serializável (não entra no estado do LangGraph) — vive num registro em
-    memória por run_id, ver src/agent/nodes.py (mesmo padrão da WebSession)."""
+    """Estado vivo de uma run mobile: driver Appium + identificador do app
+    sob teste (package Android ou bundle id iOS — usado por launch/
+    terminate) + onde salvar screenshots. Não é serializável (não entra no
+    estado do LangGraph) — vive num registro em memória por run_id, ver
+    src/agent/nodes.py (mesmo padrão da WebSession)."""
 
     driver: WebDriver
     app_package: str
     run_id: str
     artifacts_dir: Path
+    platform: Platform = "android"
     scenario_position: int = field(default=0)
     step_position: int = field(default=0)
     _elements: dict[str, Any] = field(default_factory=dict)
@@ -80,12 +128,17 @@ class MobileSession:
 
     async def snapshot_text(self) -> str:
         lines_and_elements = await asyncio.to_thread(self._collect_elements)
-        activity = await asyncio.to_thread(lambda: self.driver.current_activity)
-        lines = [f"Activity: {activity}", ""]
+        header = await asyncio.to_thread(self._header_line)
+        lines = [header, ""]
         if not lines_and_elements:
             lines.append("(nenhum elemento visível)")
         lines.extend(lines_and_elements)
         return "\n".join(lines)
+
+    def _header_line(self) -> str:
+        if self.platform == "android":
+            return f"Activity: {self.driver.current_activity}"
+        return f"App: {self.app_package}"
 
     def _collect_elements(self) -> list[str]:
         # Cada chamada revarre e reatribui as refs do zero — refs de uma
@@ -93,8 +146,9 @@ class MobileSession:
         # web: um cache que persiste sozinho entre chamadas vira uma fonte
         # de bugs sutis quando a tela muda).
         self._elements = {}
+        xpath = _ANDROID_SNAPSHOT_XPATH if self.platform == "android" else _IOS_SNAPSHOT_XPATH
         try:
-            found = self.driver.find_elements(AppiumBy.XPATH, _SNAPSHOT_XPATH)
+            found = self.driver.find_elements(AppiumBy.XPATH, xpath)
         except WebDriverException as e:
             raise MobileToolError(f"Falha ao ler a tela atual: {e}") from e
 
@@ -104,22 +158,36 @@ class MobileSession:
             try:
                 if not el.is_displayed():
                     continue
-                class_name = str(el.get_attribute("className") or "")
-                clickable = (el.get_attribute("clickable") or "false") == "true"
-                content_desc = str(el.get_attribute("contentDescription") or "")
-                text = el.text or ""
-                resource_id = str(el.get_attribute("resourceId") or "")
-                enabled = (el.get_attribute("enabled") or "true") != "false"
+                role, name, enabled = self._describe_element(el)
             except StaleElementReferenceException:
                 continue
             idx += 1
             ref = f"e{idx}"
             self._elements[ref] = el
-            role = _role_for(class_name, clickable)
-            name = (content_desc or text or resource_id.rsplit("/", 1)[-1])[:80]
             state = " [desabilitado]" if not enabled else ""
             rows.append(f'[{ref}] {role} "{name}"{state}')
         return rows
+
+    def _describe_element(self, el: Any) -> tuple[str, str, bool]:
+        if self.platform == "android":
+            class_name = str(el.get_attribute("className") or "")
+            clickable = (el.get_attribute("clickable") or "false") == "true"
+            content_desc = str(el.get_attribute("contentDescription") or "")
+            text = el.text or ""
+            resource_id = str(el.get_attribute("resourceId") or "")
+            enabled = (el.get_attribute("enabled") or "true") != "false"
+            role = _android_role_for(class_name, clickable)
+            name = (content_desc or text or resource_id.rsplit("/", 1)[-1])[:80]
+            return role, name, enabled
+
+        element_type = str(el.tag_name or "")
+        label = str(el.get_attribute("label") or "")
+        name_attr = str(el.get_attribute("name") or "")
+        value_attr = str(el.get_attribute("value") or "")
+        enabled = (el.get_attribute("enabled") or "true") != "false"
+        role = _ios_role_for(element_type)
+        name = (label or name_attr or value_attr)[:80]
+        return role, name, enabled
 
     def _require_element(self, ref: str):
         el = self._elements.get(ref)
@@ -146,14 +214,22 @@ class MobileSession:
     async def long_press(self, ref: str) -> str:
         el = self._require_element(ref)
         try:
-            await asyncio.to_thread(
-                self.driver.execute_script, "mobile: longClickGesture", {"elementId": el.id, "duration": 1000}
-            )
+            if self.platform == "android":
+                await asyncio.to_thread(
+                    self.driver.execute_script, "mobile: longClickGesture", {"elementId": el.id, "duration": 1000}
+                )
+            else:
+                await asyncio.to_thread(
+                    self.driver.execute_script, "mobile: touchAndHold", {"elementId": el.id, "duration": 1.0}
+                )
         except StaleElementReferenceException as e:
             raise MobileToolError(f"Ref {ref} ficou obsoleta (a tela mudou) — tire um novo snapshot.") from e
         return f"Toque longo em {ref}.\n\n" + await self.snapshot_text()
 
     async def swipe(self, direction: str) -> str:
+        # Gesto genérico via W3C Actions puro (pointer input) — não depende
+        # de um comando "mobile: X" nomeado por plataforma, então funciona
+        # igual em Android e iOS.
         size = await asyncio.to_thread(lambda: self.driver.get_window_size())
         w, h = size["width"], size["height"]
         cx = w // 2
@@ -168,17 +244,42 @@ class MobileSession:
 
     async def scroll_to(self, text: str) -> str:
         escaped = text.replace('"', "")
-        selector = (
-            'new UiScrollable(new UiSelector().scrollable(true)).scrollIntoView('
-            f'new UiSelector().textContains("{escaped}"))'
-        )
         try:
-            await asyncio.to_thread(self.driver.find_element, AppiumBy.ANDROID_UIAUTOMATOR, selector)
+            if self.platform == "android":
+                await asyncio.to_thread(self._android_scroll_to_sync, escaped)
+            else:
+                await asyncio.to_thread(self._ios_scroll_to_sync, escaped)
         except (NoSuchElementException, WebDriverException) as e:
             raise MobileToolError(f'Não consegui rolar até um texto contendo "{text}": {e}') from e
         return f'Rolou até "{text}".\n\n' + await self.snapshot_text()
 
+    def _android_scroll_to_sync(self, text: str) -> None:
+        selector = (
+            'new UiScrollable(new UiSelector().scrollable(true)).scrollIntoView('
+            f'new UiSelector().textContains("{text}"))'
+        )
+        self.driver.find_element(AppiumBy.ANDROID_UIAUTOMATOR, selector)
+
+    def _ios_scroll_to_sync(self, text: str, max_attempts: int = 6) -> None:
+        # XCUITest não tem um "scroll até achar" nativo como o UiScrollable
+        # do Android — `mobile: scroll` faz UM scroll por chamada, então
+        # repete até o texto aparecer ou esgotar as tentativas.
+        predicate = f"name CONTAINS '{text}' OR label CONTAINS '{text}'"
+        locator = f'**/XCUIElementTypeAny[`{predicate}`]'
+        for _ in range(max_attempts):
+            if self.driver.find_elements(AppiumBy.IOS_CLASS_CHAIN, locator):
+                return
+            self.driver.execute_script("mobile: scroll", {"direction": "down"})
+        # última tentativa — deixa a NoSuchElementException real propagar
+        # com a mensagem padrão do Selenium.
+        self.driver.find_element(AppiumBy.IOS_CLASS_CHAIN, locator)
+
     async def press_back(self) -> str:
+        if self.platform != "android":
+            raise MobileToolError(
+                "iOS não tem um botão de voltar de hardware/sistema — toque no botão de voltar "
+                "visível na tela (veja o snapshot) em vez de usar mobile_press_back."
+            )
         await asyncio.to_thread(self.driver.back)
         return await self.snapshot_text()
 
@@ -192,7 +293,10 @@ class MobileSession:
     async def wait_for(self, text: str, timeout_ms: int = 8_000) -> str:
         deadline = time.monotonic() + timeout_ms / 1000
         escaped = text.replace('"', "")
-        xpath = f'//*[contains(@text,"{escaped}") or contains(@content-desc,"{escaped}")]'
+        if self.platform == "android":
+            xpath = f'//*[contains(@text,"{escaped}") or contains(@content-desc,"{escaped}")]'
+        else:
+            xpath = f'//*[contains(@name,"{escaped}") or contains(@label,"{escaped}") or contains(@value,"{escaped}")]'
         while True:
             found = await asyncio.to_thread(self.driver.find_elements, AppiumBy.XPATH, xpath)
             if found:
@@ -276,8 +380,12 @@ def build_mobile_tools(session: MobileSession) -> list:
 
     @tool
     async def mobile_press_back() -> str:
-        """Pressiona o botão de voltar (hardware/gesto) do Android."""
-        return await session.press_back()
+        """Pressiona o botão de voltar do sistema (só Android — no iOS não
+        existe; toque no botão de voltar visível na tela)."""
+        try:
+            return await session.press_back()
+        except MobileToolError as e:
+            return str(e)
 
     @tool
     async def mobile_hide_keyboard() -> str:
