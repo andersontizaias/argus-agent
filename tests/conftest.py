@@ -24,6 +24,15 @@ import pytest
 from src import store
 
 
+@pytest.fixture
+def anyio_backend():
+    # anyio ships its own pytest plugin (registered automatically — see
+    # pyproject: nenhuma dependência extra precisa ser adicionada); sem
+    # fixar o backend, testes marcados @pytest.mark.anyio rodariam em
+    # dobro (asyncio + trio), e trio não está instalado.
+    return "asyncio"
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_db():
     store.init_db()
@@ -37,6 +46,14 @@ def _clean_tables():
     from src import db, models
 
     with db.session_scope() as session:
-        for model in (models.Secret, models.Setting, models.ApiKey, models.Run):
+        # Ordem importa: com PRAGMA foreign_keys=ON (src/db.py), apagar Run
+        # antes dos filhos (Scenario/Step/Evidence/RunEvent) violaria a FK —
+        # bulk delete não dispara o cascade ORM (esse só age em session.delete
+        # de um objeto com o relationship carregado), então a ordem tem que
+        # ser filho-antes-do-pai manualmente.
+        for model in (
+            models.Evidence, models.Step, models.Scenario, models.RunEvent,
+            models.Run, models.Secret, models.Setting, models.ApiKey,
+        ):
             session.query(model).delete()
     yield

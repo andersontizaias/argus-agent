@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><title>Argus Test Shop</title></head>
+<body>
+<div id="login-page">
+  <h1>Argus Test Shop</h1>
+  <input type="text" id="user-name" placeholder="Username" aria-label="Username">
+  <input type="password" id="password" placeholder="Password" aria-label="Password">
+  <button id="login-button" onclick="doLogin()">Login</button>
+  <div id="error-message" role="alert" style="display:none;color:red;"></div>
+</div>
+<div id="inventory-page" style="display:none;">
+  <h2>Products</h2>
+  <p>Bem-vindo! Lista de produtos carregada.</p>
+</div>
+<script>
+function doLogin() {
+  var user = document.getElementById('user-name').value;
+  var pass = document.getElementById('password').value;
+  var err = document.getElementById('error-message');
+  if (user === 'standard_user' && pass === 'secret_sauce') {
+    document.getElementById('login-page').style.display = 'none';
+    document.getElementById('inventory-page').style.display = 'block';
+  } else {
+    err.textContent = 'Usuário ou senha inválidos.';
+    err.style.display = 'block';
+  }
+}
+</script>
+</body>
+</html>
