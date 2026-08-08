@@ -4,11 +4,29 @@ Cada provider mapeia para um modelo LangChain via `init_chat_model` (rota
 oficial multi-provider do LangChain). "ollama" e "custom" reaproveitam o
 `ChatOpenAI` apontando para um `base_url` compatível com a API da OpenAI —
 mesma convenção do `custom/<model>` do phalanx, sem precisar de um pacote
-dedicado por host self-hosted.
+dedicado por host self-hosted. O `base_url` do Ollama não precisa ser
+localhost: `http://<host-remoto>:11434/v1` funciona igual (mesmo padrão do
+phalanx — servidor Ollama rodando em outra máquina/VPS), inclusive atrás de
+um reverse proxy com Bearer token (`ollama_api_key`, opcional).
 """
 from dataclasses import dataclass
 
 from src import store
+
+# Ollama zera o context window em 2048 tokens por padrão quando o caller não
+# manda `num_ctx` — pouco pra um prompt com persona + snapshot da página +
+# histórico do cenário, que trunca silenciosamente e degrada a qualidade das
+# respostas. Mesmo ajuste (e mesmo valor) do phalanx (src/llm_providers.py
+# de lá, OLLAMA_NUM_CTX) — reaproveitado aqui porque o sintoma é idêntico.
+OLLAMA_NUM_CTX = 32768
+
+# Inferência local/remota sem GPU é lenta (medido: ~2,5 tok/s — ver memória
+# "Performance de inferência: gargalo é CPU sem GPU") — um timeout de
+# provider cloud (dezenas de segundos) derruba toda chamada real ao Ollama
+# antes da resposta terminar. Configurável via Config (ollama_timeout_seconds)
+# para quem tiver GPU e quiser um timeout mais curto.
+DEFAULT_TIMEOUT_SECONDS = 60
+DEFAULT_OLLAMA_TIMEOUT_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -30,7 +48,7 @@ SUPPORTED_PROVIDERS = [
                  example_model="gemini-2.5-flash", secret_name="gemini_api_key"),
     ProviderInfo("groq", "Groq", needs_api_key=True, needs_base_url=False,
                  example_model="llama-3.3-70b-versatile", secret_name="groq_api_key"),
-    ProviderInfo("ollama", "Ollama (local)", needs_api_key=False, needs_base_url=True,
+    ProviderInfo("ollama", "Ollama (local ou remoto)", needs_api_key=False, needs_base_url=True,
                  example_model="qwen2.5:14b", secret_name="ollama_api_key"),
     ProviderInfo("custom", "Custom (endpoint compatível com OpenAI)", needs_api_key=True, needs_base_url=True,
                  example_model="", secret_name="custom_llm_api_key"),
@@ -55,13 +73,29 @@ def is_provider_configured(provider_id: str) -> bool:
     return not (provider.needs_base_url and not store.get_setting(_BASE_URL_SETTING_KEYS[provider.id]))
 
 
-def build_chat_model(provider_id: str, model: str, api_key_plain: str, *, max_tokens: int = 1024, timeout: int = 30):
+def _resolve_timeout(provider_id: str, timeout: int | None) -> int:
+    """`timeout=None` (não passado pelo caller) escolhe um default por
+    provider; um valor explícito (ex.: o ping curto de "testar provider")
+    sempre prevalece."""
+    if timeout is not None:
+        return timeout
+    if provider_id == "ollama":
+        configured = store.get_setting("ollama_timeout_seconds")
+        return int(configured) if configured else DEFAULT_OLLAMA_TIMEOUT_SECONDS
+    return DEFAULT_TIMEOUT_SECONDS
+
+
+def build_chat_model(
+    provider_id: str, model: str, api_key_plain: str, *, max_tokens: int = 1024, timeout: int | None = None,
+):
     """Constrói um chat model LangChain pronto para uso. `api_key_plain` já vem
     decifrado pelo caller (src/user_secrets.py) — este módulo nunca lê o banco
     diretamente para não acoplar a camada de LLM à de persistência."""
     provider = get_provider(provider_id)
     if not provider:
         raise ValueError(f"Provider desconhecido: {provider_id}")
+
+    resolved_timeout = _resolve_timeout(provider.id, timeout)
 
     if provider.id in ("ollama", "custom"):
         from langchain_openai import ChatOpenAI
@@ -70,12 +104,14 @@ def build_chat_model(provider_id: str, model: str, api_key_plain: str, *, max_to
         base_url = store.get_setting(_BASE_URL_SETTING_KEYS[provider.id])
         if not base_url:
             raise ValueError(f"{provider.label} precisa de uma base URL configurada.")
+        extra_body = {"options": {"num_ctx": OLLAMA_NUM_CTX}} if provider.id == "ollama" else None
         return ChatOpenAI(
             model=model,
             api_key=SecretStr(api_key_plain or "ollama"),  # Ollama ignora o valor, mas o cliente exige algo não-vazio
             base_url=base_url,
             max_completion_tokens=max_tokens,
-            timeout=timeout,
+            timeout=resolved_timeout,
+            extra_body=extra_body,
         )
 
     from langchain.chat_models import init_chat_model
@@ -85,5 +121,5 @@ def build_chat_model(provider_id: str, model: str, api_key_plain: str, *, max_to
         model_provider=provider.id,
         api_key=api_key_plain,
         max_tokens=max_tokens,
-        timeout=timeout,
+        timeout=resolved_timeout,
     )

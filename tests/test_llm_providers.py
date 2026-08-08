@@ -52,3 +52,42 @@ def test_build_chat_model_anthropic_returns_chat_model():
 
     model = llm_providers.build_chat_model("anthropic", "claude-3-5-haiku-latest", "sk-ant-fake")
     assert isinstance(model, ChatAnthropic)
+
+
+def test_build_chat_model_ollama_sets_num_ctx_and_remote_base_url():
+    # base_url remoto (não-localhost) — mesmo caminho de código de um
+    # servidor local, prova que não há acoplamento a "127.0.0.1"/"localhost".
+    store.set_setting("ollama_base_url", "http://192.168.1.50:11434/v1")
+    model = llm_providers.build_chat_model("ollama", "qwen2.5:14b", "")
+    assert model.openai_api_base == "http://192.168.1.50:11434/v1"
+    assert model.extra_body == {"options": {"num_ctx": llm_providers.OLLAMA_NUM_CTX}}
+
+
+def test_build_chat_model_custom_does_not_set_num_ctx():
+    store.set_setting("custom_llm_base_url", "http://localhost:8080/v1")
+    model = llm_providers.build_chat_model("custom", "some-model", "key")
+    assert model.extra_body is None
+
+
+def test_resolve_timeout_ollama_default_is_generous():
+    # inferência sem GPU é lenta (ver docstring) — default bem maior que o
+    # de um provider cloud.
+    assert llm_providers._resolve_timeout("ollama", None) == llm_providers.DEFAULT_OLLAMA_TIMEOUT_SECONDS
+    assert llm_providers._resolve_timeout("anthropic", None) == llm_providers.DEFAULT_TIMEOUT_SECONDS
+
+
+def test_resolve_timeout_ollama_respects_configured_setting():
+    store.set_setting("ollama_timeout_seconds", "45")
+    assert llm_providers._resolve_timeout("ollama", None) == 45
+
+
+def test_resolve_timeout_explicit_value_always_wins():
+    store.set_setting("ollama_timeout_seconds", "45")
+    assert llm_providers._resolve_timeout("ollama", 7) == 7
+
+
+def test_build_chat_model_ollama_uses_configured_timeout():
+    store.set_setting("ollama_base_url", "http://localhost:11434/v1")
+    store.set_setting("ollama_timeout_seconds", "600")
+    model = llm_providers.build_chat_model("ollama", "qwen2.5:14b", "")
+    assert model.request_timeout == 600

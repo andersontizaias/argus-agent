@@ -61,6 +61,21 @@ def test_save_base_urls_and_settings():
     assert body["custom_llm_base_url"] == "http://localhost:8080/v1"
 
 
+def test_save_and_retrieve_ollama_timeout_seconds():
+    with _client() as client:
+        resp = client.post("/api/config", json={"ollama_timeout_seconds": "600"})
+        assert resp.status_code == 200
+        resp = client.get("/api/config")
+    assert resp.json()["ollama_timeout_seconds"] == "600"
+
+
+def test_save_ollama_timeout_seconds_rejects_non_numeric():
+    with _client() as client:
+        resp = client.post("/api/config", json={"ollama_timeout_seconds": "abc"})
+    assert resp.status_code == 400
+    assert "número inteiro" in resp.json()["error"]
+
+
 def test_test_llm_provider_unknown_returns_404():
     with _client() as client:
         resp = client.post("/api/config/test-llm-provider/nope")

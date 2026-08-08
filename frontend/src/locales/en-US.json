@@ -22,6 +22,7 @@
     "defaultModel": "Default model",
     "apiKey": "API key",
     "baseUrl": "Base URL",
+    "timeoutSeconds": "Timeout (seconds)",
     "notConfigured": "Not configured",
     "testOk": "Connection ok",
     "testFail": "Connection failed"

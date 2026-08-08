@@ -16,6 +16,7 @@ export interface ProjectConfig {
   groq_api_key: string;
   ollama_api_key?: string;
   ollama_base_url: string;
+  ollama_timeout_seconds: string;
   custom_llm_api_key: string;
   custom_llm_base_url: string;
   default_llm_provider: string;

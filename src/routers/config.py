@@ -4,6 +4,8 @@ Padrão de masking herdado do phalanx (src/routers/config.py de lá): o GET
 nunca devolve o valor real de um secret, só um placeholder mascarado; o POST
 reenviando esse placeholder preserva o valor já salvo em vez de sobrescrever
 com lixo."""
+import asyncio
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -39,6 +41,7 @@ async def get_config():
     secrets = {p.secret_name: _mask_secret(user_secrets.get_secret_plain(p.secret_name)) for p in SUPPORTED_PROVIDERS if p.needs_api_key}
     settings = {
         "ollama_base_url": store.get_setting("ollama_base_url"),
+        "ollama_timeout_seconds": store.get_setting("ollama_timeout_seconds"),
         "custom_llm_base_url": store.get_setting("custom_llm_base_url"),
         "default_llm_provider": store.get_setting("default_llm_provider"),
         "default_llm_model": store.get_setting("default_llm_model"),
@@ -53,6 +56,7 @@ class ConfigUpdate(BaseModel):
     groq_api_key: str = ""
     ollama_api_key: str = ""
     ollama_base_url: str = ""
+    ollama_timeout_seconds: str = ""
     custom_llm_api_key: str = ""
     custom_llm_base_url: str = ""
     default_llm_provider: str = ""
@@ -61,6 +65,9 @@ class ConfigUpdate(BaseModel):
 
 @router.post("/api/config")
 async def save_config(update: ConfigUpdate):
+    if update.ollama_timeout_seconds and not update.ollama_timeout_seconds.isdigit():
+        return JSONResponse(status_code=400, content={"error": "Timeout do Ollama precisa ser um número inteiro de segundos."})
+
     for provider in SUPPORTED_PROVIDERS:
         if not provider.needs_api_key:
             continue
@@ -69,6 +76,7 @@ async def save_config(update: ConfigUpdate):
         user_secrets.set_secret_plain(provider.secret_name, _preserve_masked(new_value, existing))
 
     store.set_setting("ollama_base_url", update.ollama_base_url)
+    store.set_setting("ollama_timeout_seconds", update.ollama_timeout_seconds)
     store.set_setting("custom_llm_base_url", update.custom_llm_base_url)
     store.set_setting("default_llm_provider", update.default_llm_provider)
     store.set_setting("default_llm_model", update.default_llm_model)
@@ -90,7 +98,10 @@ async def test_llm_provider(provider_id: str):
     try:
         api_key = user_secrets.get_secret_plain(provider.secret_name)
         model = build_chat_model(provider_id, provider.example_model, api_key, max_tokens=5, timeout=15)
-        model.invoke("Reply with only the single word: pong")
+        # .invoke é síncrono — rodar direto travaria o event loop inteiro
+        # (outras requisições) até o provider responder, especialmente ruim
+        # pra um Ollama remoto/lento (ver DEFAULT_OLLAMA_TIMEOUT_SECONDS).
+        await asyncio.to_thread(model.invoke, "Reply with only the single word: pong")
         return {"ok": True, "provider": provider_id, "model": provider.example_model}
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": f"Falha na conexão: {e!s}"})

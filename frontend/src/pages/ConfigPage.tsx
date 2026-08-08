@@ -18,12 +18,21 @@ const LLM_PROVIDERS: {
   apiKeyField: keyof ProjectConfig;
   needsBaseUrl?: boolean;
   baseUrlField?: keyof ProjectConfig;
+  baseUrlPlaceholder?: string;
+  helpText?: string;
+  timeoutField?: keyof ProjectConfig;
 }[] = [
   { id: 'anthropic', label: 'Anthropic', apiKeyField: 'anthropic_api_key' },
   { id: 'openai', label: 'OpenAI', apiKeyField: 'openai_api_key' },
   { id: 'google_genai', label: 'Google Gemini', apiKeyField: 'gemini_api_key' },
   { id: 'groq', label: 'Groq', apiKeyField: 'groq_api_key' },
-  { id: 'ollama', label: 'Ollama (local)', apiKeyField: 'ollama_api_key' as keyof ProjectConfig, needsBaseUrl: true, baseUrlField: 'ollama_base_url' },
+  {
+    id: 'ollama', label: 'Ollama (local ou remoto)', apiKeyField: 'ollama_api_key' as keyof ProjectConfig,
+    needsBaseUrl: true, baseUrlField: 'ollama_base_url',
+    baseUrlPlaceholder: 'http://localhost:11434 ou http://<host-remoto>:11434',
+    helpText: 'A chave de API é opcional — só necessária se o servidor Ollama estiver atrás de um proxy com autenticação (Bearer token).',
+    timeoutField: 'ollama_timeout_seconds',
+  },
   { id: 'custom', label: 'Custom (compatível com OpenAI)', apiKeyField: 'custom_llm_api_key', needsBaseUrl: true, baseUrlField: 'custom_llm_base_url' },
 ];
 
@@ -108,10 +117,21 @@ export function ConfigPage() {
                 {provider.needsBaseUrl && provider.baseUrlField && (
                   <Input
                     type="text"
-                    placeholder={t('config.baseUrl')}
+                    placeholder={provider.baseUrlPlaceholder ?? t('config.baseUrl')}
                     value={field(provider.baseUrlField)}
                     onChange={(e) => setField(provider.baseUrlField!, e.target.value)}
                     className="sm:flex-1"
+                  />
+                )}
+                {provider.timeoutField && (
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="300"
+                    title={t('config.timeoutSeconds')}
+                    value={field(provider.timeoutField)}
+                    onChange={(e) => setField(provider.timeoutField!, e.target.value.replace(/\D/g, ''))}
+                    className="sm:w-28"
                   />
                 )}
                 <Button
@@ -122,6 +142,7 @@ export function ConfigPage() {
                   {testProvider.isPending ? t('config.testing') : t('config.testProvider')}
                 </Button>
               </div>
+              {provider.helpText && <p className="text-xs text-muted-foreground">{provider.helpText}</p>}
               {testResults[provider.id] && (
                 <p className={testResults[provider.id].ok ? 'text-sm text-[hsl(var(--good))]' : 'text-sm text-destructive'}>
                   {testResults[provider.id].message}
