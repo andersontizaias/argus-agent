@@ -86,6 +86,32 @@ def test_resolve_timeout_explicit_value_always_wins():
     assert llm_providers._resolve_timeout("ollama", 7) == 7
 
 
+@pytest.mark.parametrize("raw,expected", [
+    ("https://host.example.com", "https://host.example.com/v1"),
+    ("https://host.example.com/", "https://host.example.com/v1"),
+    ("https://host.example.com/v1", "https://host.example.com/v1"),
+    ("https://host.example.com/v1/", "https://host.example.com/v1"),
+])
+def test_normalize_ollama_base_url(raw, expected):
+    assert llm_providers._normalize_ollama_base_url(raw) == expected
+
+
+def test_build_chat_model_ollama_normalizes_base_url_without_v1():
+    # Mesma URL "pelada" que o phalanx aceita (LiteLLM/CrewAI fala com a API
+    # nativa do Ollama) — o ChatOpenAI daqui precisa do /v1 explícito.
+    store.set_setting("ollama_base_url", "https://ollama-remoto.example.com/")
+    model = llm_providers.build_chat_model("ollama", "qwen2.5:14b", "token")
+    assert model.openai_api_base == "https://ollama-remoto.example.com/v1"
+
+
+def test_build_chat_model_custom_does_not_normalize_base_url():
+    # "custom" pode ser qualquer endpoint compatível com OpenAI — não
+    # assume convenção de path, ao contrário do Ollama.
+    store.set_setting("custom_llm_base_url", "https://custom.example.com/api")
+    model = llm_providers.build_chat_model("custom", "some-model", "key")
+    assert model.openai_api_base == "https://custom.example.com/api"
+
+
 def test_build_chat_model_ollama_uses_configured_timeout():
     store.set_setting("ollama_base_url", "http://localhost:11434/v1")
     store.set_setting("ollama_timeout_seconds", "600")

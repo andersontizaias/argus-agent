@@ -27,7 +27,7 @@ const LLM_PROVIDERS: {
   { id: 'google_genai', label: 'Google Gemini', apiKeyField: 'gemini_api_key' },
   { id: 'groq', label: 'Groq', apiKeyField: 'groq_api_key' },
   {
-    id: 'ollama', label: 'Ollama (local ou remoto)', apiKeyField: 'ollama_api_key' as keyof ProjectConfig,
+    id: 'ollama', label: 'Ollama (local ou remoto)', apiKeyField: 'ollama_api_key',
     needsBaseUrl: true, baseUrlField: 'ollama_base_url',
     baseUrlPlaceholder: 'http://localhost:11434 ou http://<host-remoto>:11434',
     helpText: 'A chave de API é opcional — só necessária se o servidor Ollama estiver atrás de um proxy com autenticação (Bearer token).',

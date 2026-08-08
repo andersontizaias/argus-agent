@@ -14,7 +14,7 @@ export interface ProjectConfig {
   openai_api_key: string;
   gemini_api_key: string;
   groq_api_key: string;
-  ollama_api_key?: string;
+  ollama_api_key: string;
   ollama_base_url: string;
   ollama_timeout_seconds: string;
   custom_llm_api_key: string;

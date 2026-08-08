@@ -85,6 +85,19 @@ def _resolve_timeout(provider_id: str, timeout: int | None) -> int:
     return DEFAULT_TIMEOUT_SECONDS
 
 
+def _normalize_ollama_base_url(base_url: str) -> str:
+    """`ChatOpenAI` (SDK da OpenAI) monta a URL final como `base_url +
+    "/chat/completions"`, sem assumir `/v1` sozinho — diferente do LiteLLM/
+    CrewAI (usado no phalanx), que fala com a API nativa do Ollama e aceita
+    a base URL "pelada" (ex.: `https://host/`). Sem essa normalização, a
+    MESMA URL que funciona no phalanx dá 404 aqui. Aceita com ou sem barra
+    final, com ou sem `/v1` já incluso."""
+    base_url = base_url.rstrip("/")
+    if base_url.endswith("/v1"):
+        return base_url
+    return f"{base_url}/v1"
+
+
 def build_chat_model(
     provider_id: str, model: str, api_key_plain: str, *, max_tokens: int = 1024, timeout: int | None = None,
 ):
@@ -104,6 +117,8 @@ def build_chat_model(
         base_url = store.get_setting(_BASE_URL_SETTING_KEYS[provider.id])
         if not base_url:
             raise ValueError(f"{provider.label} precisa de uma base URL configurada.")
+        if provider.id == "ollama":
+            base_url = _normalize_ollama_base_url(base_url)
         extra_body = {"options": {"num_ctx": OLLAMA_NUM_CTX}} if provider.id == "ollama" else None
         return ChatOpenAI(
             model=model,

@@ -38,7 +38,12 @@ def _preserve_masked(new_value: str, existing_value: str) -> str:
 
 @router.get("/api/config")
 async def get_config():
-    secrets = {p.secret_name: _mask_secret(user_secrets.get_secret_plain(p.secret_name)) for p in SUPPORTED_PROVIDERS if p.needs_api_key}
+    # Não filtra por `needs_api_key`: esse flag é sobre o provider EXIGIR
+    # chave pra funcionar (ex.: Anthropic sim, Ollama não) — não sobre se o
+    # campo existe. Ollama/custom aceitam uma chave opcional (Bearer token
+    # de um reverse proxy na frente do servidor), e um `if p.needs_api_key`
+    # aqui os excluía silenciosamente da resposta.
+    secrets = {p.secret_name: _mask_secret(user_secrets.get_secret_plain(p.secret_name)) for p in SUPPORTED_PROVIDERS}
     settings = {
         "ollama_base_url": store.get_setting("ollama_base_url"),
         "ollama_timeout_seconds": store.get_setting("ollama_timeout_seconds"),
@@ -68,9 +73,11 @@ async def save_config(update: ConfigUpdate):
     if update.ollama_timeout_seconds and not update.ollama_timeout_seconds.isdigit():
         return JSONResponse(status_code=400, content={"error": "Timeout do Ollama precisa ser um número inteiro de segundos."})
 
+    # Mesmo raciocínio do get_config acima: salva a chave de todo provider,
+    # exigida ou não — o bug original (`if not provider.needs_api_key:
+    # continue`) descartava silenciosamente a chave do Ollama/custom no
+    # POST, então preenchê-la na UI nunca persistia nada.
     for provider in SUPPORTED_PROVIDERS:
-        if not provider.needs_api_key:
-            continue
         new_value = getattr(update, provider.secret_name, "")
         existing = user_secrets.get_secret_plain(provider.secret_name)
         user_secrets.set_secret_plain(provider.secret_name, _preserve_masked(new_value, existing))
@@ -95,13 +102,30 @@ async def test_llm_provider(provider_id: str):
     if not is_provider_configured(provider_id):
         return JSONResponse(status_code=400, content={"error": f"{provider.label} não está configurado."})
 
+    # Provider cloud: qualquer example_model fixo sempre existe do lado do
+    # provider. Ollama é diferente — só funciona se o modelo já tiver sido
+    # baixado NAQUELE servidor — então testa com o modelo default que o
+    # usuário configurou pra esse provider (quando houver um), não um nome
+    # hardcoded que pode nunca ter sido `ollama pull`ado lá.
+    test_model = provider.example_model
+    if store.get_setting("default_llm_provider") == provider_id:
+        test_model = store.get_setting("default_llm_model") or test_model
+
+    # Providers cloud: 15s é de sobra pra um "pong" de 5 tokens — falha
+    # rápido se a credencial estiver errada. Ollama é o oposto: mesmo com
+    # tudo certo, a primeira chamada pode incluir carregar o modelo na
+    # memória do servidor (cold start), que sozinho já pode passar de 15s
+    # numa máquina sem GPU — usa o mesmo timeout configurável de uma
+    # chamada real (ollama_timeout_seconds) em vez de um valor fixo curto.
+    test_timeout = None if provider.id == "ollama" else 15
+
     try:
         api_key = user_secrets.get_secret_plain(provider.secret_name)
-        model = build_chat_model(provider_id, provider.example_model, api_key, max_tokens=5, timeout=15)
+        model = build_chat_model(provider_id, test_model, api_key, max_tokens=5, timeout=test_timeout)
         # .invoke é síncrono — rodar direto travaria o event loop inteiro
         # (outras requisições) até o provider responder, especialmente ruim
         # pra um Ollama remoto/lento (ver DEFAULT_OLLAMA_TIMEOUT_SECONDS).
         await asyncio.to_thread(model.invoke, "Reply with only the single word: pong")
-        return {"ok": True, "provider": provider_id, "model": provider.example_model}
+        return {"ok": True, "provider": provider_id, "model": test_model}
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": f"Falha na conexão: {e!s}"})
