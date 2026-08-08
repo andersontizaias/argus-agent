@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # A tag é a fonte de verdade do "quer publicar isto", mas a versão
+      # publicada (no tarball, no /api/health, no rodapé da UI) vem sempre
+      # do pyproject.toml (ver src/settings.py:VERSION) — as duas têm que
+      # bater, senão a tag foi cortada esquecendo de bumpar a versão.
+      - name: Valida que a tag bate com [project].version do pyproject.toml
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PYPROJECT_VERSION=$(python3 -c "
+          import re
+          text = open('pyproject.toml').read()
+          print(re.search(r'^version = \"([^\"]+)\"', text, re.M).group(1))
+          ")
+          echo "tag=$TAG_VERSION pyproject=$PYPROJECT_VERSION"
+          if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "::error::Tag v$TAG_VERSION não bate com pyproject.toml ($PYPROJECT_VERSION)."
+            exit 1
+          fi
+          echo "VERSION=$PYPROJECT_VERSION" >> "$GITHUB_ENV"
+
+      - run: uv sync --frozen
+      - name: Gerar ARGUS_SECRET_KEY efêmera só para os testes
+        run: echo "ARGUS_SECRET_KEY=$(uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
+      - run: uv run ruff check src tests
+      - run: uv run mypy src
+      - run: uv run playwright install --with-deps chromium
+      - run: |
+          mkdir -p frontend/dist/assets frontend/dist/img
+          echo '<!doctype html><html><body><div id="root"></div></body></html>' > frontend/dist/index.html
+          printf '\x89PNG\r\n\x1a\n' > frontend/dist/img/logo.png
+      - run: uv run alembic upgrade head
+        env:
+          ARGUS_DB_PATH: /tmp/argus-release-migration-check.db
+      - run: uv run pytest --cov
+
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm run lint
+      - working-directory: frontend
+        run: npm run test:coverage
+      - name: Build real do frontend (substitui o stub usado nos testes do backend)
+        working-directory: frontend
+        run: npm run build
+
+      - name: Empacota o tarball da release
+        run: |
+          STAGE="argus-agent-v${VERSION}"
+          mkdir -p "package/$STAGE"
+          cp -r src migrations scripts "package/$STAGE/"
+          cp alembic.ini pyproject.toml uv.lock README.md .env.example "package/$STAGE/"
+          mkdir -p "package/$STAGE/frontend"
+          cp -r frontend/dist "package/$STAGE/frontend/dist"
+          # __pycache__/.pyc ficam pra trás dos passos de teste/lint acima —
+          # bytecode compilado não pertence a um tarball de distribuição.
+          find "package/$STAGE" -type d -name "__pycache__" -prune -exec rm -rf {} +
+          find "package/$STAGE" -type f -name "*.pyc" -delete
+          tar -czf "argus-agent-v${VERSION}.tar.gz" -C package "$STAGE"
+
+      - name: Cria a GitHub Release
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            "argus-agent-v${VERSION}.tar.gz" \
+            "scripts/install.sh" \
+            --title "Argus Agent v${VERSION}" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
