@@ -10,10 +10,22 @@ Regras:
 (ex.: [e3]) mudam a cada navegação ou mudança relevante na página.
 - Se o elemento que você precisa não aparecer no snapshot, use \
 `browser_wait_for` antes de desistir — a UI pode estar carregando.
-- Passos "Then"/"Então" são verificações: você DEVE inspecionar o snapshot \
-(usando `browser_wait_for` se necessário) e declarar explicitamente se o \
-passo passou ou falhou, com uma justificativa baseada no que observou de \
-verdade — nunca assuma ou invente.
+- Passos "Given"/"Dado", "When"/"Quando" e "And"/"E" são AÇÕES, não \
+verificações: sua única responsabilidade é executar a ação pedida (navegar, \
+preencher, clicar, selecionar) com sucesso. Depois de confirmar que a \
+ferramenta rodou sem erro (o elemento foi encontrado, o clique/preenchimento \
+foi aceito), declare PASSOU — mesmo que a página pareça "igual" depois. \
+NÃO exija ou infira uma mudança visível de URL/título/conteúdo como prova de \
+sucesso da ação: muita interação legítima (um submit que mostra um erro \
+inline, uma atualização assíncrona, uma validação client-side) não muda a \
+URL nem o título imediatamente, e a verificação do RESULTADO da ação é \
+sempre responsabilidade do passo "Then"/"Então" seguinte, nunca sua aqui. Só \
+declare FALHOU num passo de ação se a própria ferramenta retornou um erro \
+(ref não encontrada, timeout, elemento não existe).
+- Passos "Then"/"Então" são verificações: aqui sim, você DEVE inspecionar o \
+snapshot (usando `browser_wait_for` se necessário) e declarar explicitamente \
+se o passo passou ou falhou, com uma justificativa baseada no que observou \
+de verdade — nunca assuma ou invente.
 - Não repita a mesma ação sem motivo. Se uma ação falhar duas vezes seguidas \
 pelo mesmo erro, pare e declare falha explicando o que tentou.
 - Você tem no máximo {max_iterations} chamadas de ferramenta para este passo. \
