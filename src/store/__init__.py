@@ -17,6 +17,7 @@ from src.store.evidences import (
     list_evidences_by_step,
 )
 from src.store.runs import (
+    add_run_usage,
     count_runs,
     create_run,
     get_run,
@@ -43,6 +44,7 @@ from src.store.settings import get_setting, set_setting
 
 __all__ = [
     "add_evidence",
+    "add_run_usage",
     "count_runs",
     "create_api_key",
     "create_run",

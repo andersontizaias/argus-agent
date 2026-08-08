@@ -15,6 +15,7 @@ from typing import ClassVar
 import pytest
 
 from src import store
+from src.agent.executor import StepOutcome
 from src.agent.graph import run_graph
 from src.llm_providers import SUPPORTED_PROVIDERS
 from src.user_secrets import set_secret_plain
@@ -51,35 +52,35 @@ async def _fake_run_step(*, tools, chat_model, keyword, step_text, scenario_name
     na sessão por baixo do pano) — prova a orquestração sem custo/flakiness
     de LLM real."""
     if "página de login" in step_text:
-        return True, "ok"
+        return StepOutcome(True, "ok", 10, 5)
 
     match = re.search(r'preencho usuário "([^"]+)"', step_text)
     if match:
         snapshot = await _tool(tools, "browser_snapshot").ainvoke({})
         ref = next(line.split("]")[0][1:] for line in snapshot.splitlines() if "Username" in line)
         await _tool(tools, "browser_fill").ainvoke({"ref": ref, "text": match.group(1)})
-        return True, "ok"
+        return StepOutcome(True, "ok", 10, 5)
 
     match = re.search(r'preencho senha "([^"]+)"', step_text)
     if match:
         snapshot = await _tool(tools, "browser_snapshot").ainvoke({})
         ref = next(line.split("]")[0][1:] for line in snapshot.splitlines() if "Password" in line)
         await _tool(tools, "browser_fill").ainvoke({"ref": ref, "text": match.group(1)})
-        return True, "ok"
+        return StepOutcome(True, "ok", 10, 5)
 
     if "clico em entrar" in step_text:
         snapshot = await _tool(tools, "browser_snapshot").ainvoke({})
         ref = next(line.split("]")[0][1:] for line in snapshot.splitlines() if "Login" in line)
         await _tool(tools, "browser_click").ainvoke({"ref": ref})
-        return True, "ok"
+        return StepOutcome(True, "ok", 10, 5)
 
     if "vejo a lista de produtos" in step_text:
         # O snapshot já inclui headings (ver src/tools/web.py) — "Products"
         # aparece como texto mesmo sem ser um elemento interativo.
         snapshot = await _tool(tools, "browser_snapshot").ainvoke({})
         if "Products" in snapshot:
-            return True, "Lista de produtos visível."
-        return False, "Lista de produtos não apareceu — login não foi bem-sucedido."
+            return StepOutcome(True, "Lista de produtos visível.", 10, 5)
+        return StepOutcome(False, "Lista de produtos não apareceu — login não foi bem-sucedido.", 10, 5)
 
     raise AssertionError(f"passo inesperado no fake executor: {step_text}")
 
@@ -114,6 +115,12 @@ async def test_full_run_produces_correct_report_and_screenshots(monkeypatch, _co
     assert final_run.scenarios_failed == 1
     assert final_run.started_at is not None
     assert final_run.finished_at is not None
+    # `_fake_run_step` devolve 10 tokens_in/5 tokens_out por passo — 9 passos
+    # ao todo entre os 2 cenários (o último do cenário inválido conta 2x, 1
+    # retry, ver _run_step_with_retry).
+    assert final_run.tokens_in > 0
+    assert final_run.tokens_out > 0
+    assert final_run.cost_usd > 0.0
 
     scenarios = store.list_scenarios(run.id)
     valid, invalid = scenarios[0], scenarios[1]
@@ -131,6 +138,9 @@ async def test_full_run_produces_correct_report_and_screenshots(monkeypatch, _co
     report = json.loads(report_path.read_text())
     assert report["run"]["status"] == "failed"
     assert report["run"]["scenarios_passed"] == 1
+    assert report["run"]["tokens_in"] > 0
+    assert report["run"]["tokens_out"] > 0
+    assert report["run"]["cost_usd"] > 0.0  # claude-3-5-haiku-latest está na tabela de preço
     assert len(report["scenarios"]) == 2
     assert report["scenarios"][0]["status"] == "passed"
     assert report["scenarios"][1]["status"] == "failed"
@@ -215,7 +225,7 @@ async def test_run_scenarios_sends_configured_ollama_api_key(monkeypatch):
         return object()
 
     async def _fake_pass_step(**_kwargs):
-        return True, "ok"
+        return StepOutcome(True, "ok")
 
     monkeypatch.setattr("src.agent.nodes.build_chat_model", _fake_build_chat_model)
     monkeypatch.setattr("src.agent.nodes.run_step", _fake_pass_step)
@@ -286,7 +296,7 @@ async def test_android_run_provisions_and_tears_down_with_mocked_device_layer(mo
         calls["stop_appium"] += 1
 
     async def _fake_pass_step(**_kwargs):
-        return True, "ok"
+        return StepOutcome(True, "ok")
 
     monkeypatch.setattr(nodes_module, "fetch_binary", _fake_fetch_binary)
     monkeypatch.setattr(nodes_module, "validate_apk", lambda _path: None)
@@ -408,7 +418,7 @@ async def test_ios_run_provisions_and_tears_down_with_mocked_device_layer(monkey
         calls["stop_appium"] += 1
 
     async def _fake_pass_step(**_kwargs):
-        return True, "ok"
+        return StepOutcome(True, "ok")
 
     monkeypatch.setattr(nodes_module, "fetch_binary", _fake_fetch_binary)
     # extract_ios_app/validate_simulator_app/bundle_id_from_app são síncronas

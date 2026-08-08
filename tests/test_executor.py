@@ -71,38 +71,57 @@ async def test_run_step_executes_real_tools_and_reports_pass(session):
         AIMessage(content="RESULTADO: PASSOU — usuário preenchido com sucesso"),
     ])
 
-    passed, message = await run_step(
+    outcome = await run_step(
         tools=build_web_tools(session), chat_model=model, keyword="Quando",
         step_text='preencho usuário "standard_user"', scenario_name="Login válido", history=[],
     )
 
-    assert passed is True
-    assert "sucesso" in message
+    assert outcome.passed is True
+    assert "sucesso" in outcome.message
     assert await session.page.input_value(f'[data-argus-ref="{user_ref}"]') == "standard_user"
+
+
+async def test_run_step_sums_usage_metadata_across_calls(session):
+    # Duas chamadas de LLM neste passo (tool call + veredito final) — cada
+    # uma com seu próprio usage_metadata, como um provider real reportaria.
+    tool_call = _tool_call_message("browser_snapshot", {}, "call-1")
+    tool_call.usage_metadata = {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110}
+    verdict = AIMessage(content="RESULTADO: PASSOU — ok")
+    verdict.usage_metadata = {"input_tokens": 200, "output_tokens": 20, "total_tokens": 220}
+    model = ScriptedChatModel(responses=[tool_call, verdict])
+
+    outcome = await run_step(
+        tools=build_web_tools(session), chat_model=model, keyword="Quando",
+        step_text="clico em entrar", scenario_name="Login válido", history=[],
+    )
+
+    assert outcome.passed is True
+    assert outcome.tokens_in == 300
+    assert outcome.tokens_out == 30
 
 
 async def test_run_step_reports_failure_from_llm_verdict(session):
     model = ScriptedChatModel(responses=[AIMessage(content="RESULTADO: FALHOU — elemento não encontrado")])
 
-    passed, message = await run_step(
+    outcome = await run_step(
         tools=build_web_tools(session), chat_model=model, keyword="Então",
         step_text="vejo a lista de produtos", scenario_name="Login inválido", history=[],
     )
 
-    assert passed is False
-    assert "elemento não encontrado" in message
+    assert outcome.passed is False
+    assert "elemento não encontrado" in outcome.message
 
 
 async def test_run_step_no_clear_verdict_counts_as_failure(session):
     model = ScriptedChatModel(responses=[AIMessage(content="Cliquei no botão de login.")])
 
-    passed, message = await run_step(
+    outcome = await run_step(
         tools=build_web_tools(session), chat_model=model, keyword="Quando",
         step_text="clico em entrar", scenario_name="Login válido", history=[],
     )
 
-    assert passed is False
-    assert "veredito claro" in message
+    assert outcome.passed is False
+    assert "veredito claro" in outcome.message
 
 
 async def test_run_step_recursion_limit_counts_as_failure(session):
@@ -111,13 +130,13 @@ async def test_run_step_recursion_limit_counts_as_failure(session):
     infinite_snapshots = [_tool_call_message("browser_snapshot", {}, f"call-{i}") for i in range(20)]
     model = ScriptedChatModel(responses=infinite_snapshots)
 
-    passed, message = await run_step(
+    outcome = await run_step(
         tools=build_web_tools(session), chat_model=model, keyword="Quando",
         step_text="clico em entrar", scenario_name="Login válido", history=[], max_iterations=2,
     )
 
-    assert passed is False
-    assert "loop do agente" in message
+    assert outcome.passed is False
+    assert "loop do agente" in outcome.message
 
 
 async def test_run_step_model_error_counts_as_failure(session):
@@ -126,10 +145,10 @@ async def test_run_step_model_error_counts_as_failure(session):
             raise RuntimeError("provider indisponível")
 
     model = BrokenModel(responses=[])
-    passed, message = await run_step(
+    outcome = await run_step(
         tools=build_web_tools(session), chat_model=model, keyword="Quando",
         step_text="clico em entrar", scenario_name="Login válido", history=[],
     )
 
-    assert passed is False
-    assert "Erro ao executar o passo" in message
+    assert outcome.passed is False
+    assert "Erro ao executar o passo" in outcome.message

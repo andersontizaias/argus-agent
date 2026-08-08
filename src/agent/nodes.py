@@ -19,7 +19,7 @@ from appium.options.ios import XCUITestOptions
 from playwright.async_api import Browser, BrowserContext, Playwright, async_playwright
 
 from src import store
-from src.agent.executor import run_step
+from src.agent.executor import StepOutcome, run_step
 from src.agent.state import RunState
 from src.bdd import (
     BddParseError,
@@ -29,6 +29,7 @@ from src.bdd import (
 )
 from src.events import publish_event
 from src.llm_providers import build_chat_model, get_provider
+from src.pricing import estimate_cost_usd
 from src.report import compile_report as write_report
 from src.settings import (
     ANDROID_AVD_NAME,
@@ -377,20 +378,28 @@ async def run_scenarios(state: RunState) -> RunState:
                 continue
 
             session.set_step_context(scenario.position, step.position)
-            passed, message = await _run_step_with_retry(
+            outcome = await _run_step_with_retry(
                 build_tools=build_tools, chat_model=chat_model, keyword=step.keyword,
                 step_text=step.text, scenario_name=scenario.name, history=history,
                 test_data=test_data,
             )
 
-            evidence_path = await session.screenshot(f"{step.keyword}_{'ok' if passed else 'falhou'}")
+            if outcome.tokens_in or outcome.tokens_out:
+                cost_usd = estimate_cost_usd(
+                    run.llm_model or "", tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out
+                )
+                store.add_run_usage(
+                    run_id, tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out, cost_usd=cost_usd
+                )
+
+            evidence_path = await session.screenshot(f"{step.keyword}_{'ok' if outcome.passed else 'falhou'}")
             store.add_evidence(run_id, step.id, "screenshot", step.keyword, str(evidence_path))
 
-            status = "passed" if passed else "failed"
-            store.update_step_status(step.id, status, error=None if passed else message, finished_at=True)
+            status = "passed" if outcome.passed else "failed"
+            store.update_step_status(step.id, status, error=None if outcome.passed else outcome.message, finished_at=True)
             publish_event(run_id, "step_finished", {"step_id": step.id, "status": status})
-            history.append(f"{step.keyword} {step.text} -> {'OK' if passed else 'FALHOU: ' + message}")
-            if not passed:
+            history.append(f"{step.keyword} {step.text} -> {'OK' if outcome.passed else 'FALHOU: ' + outcome.message}")
+            if not outcome.passed:
                 scenario_failed = True
 
         final_status = "failed" if scenario_failed else "passed"
@@ -406,19 +415,24 @@ async def run_scenarios(state: RunState) -> RunState:
 async def _run_step_with_retry(
     *, build_tools: Callable[[], list], chat_model, keyword: str, step_text: str, scenario_name: str,
     history: list[str], test_data: dict[str, str],
-) -> tuple[bool, str]:
+) -> StepOutcome:
     """1 retry por passo com re-snapshot — resolve flakiness de render (o
     agente tira um snapshot novo a cada tentativa, já que cada chamada é uma
-    invocação fresca do executor)."""
+    invocação fresca do executor). Tokens da tentativa que falhou também
+    contam pro custo — foram gastos de verdade mesmo sem produzir o
+    veredito final."""
     resolved_text = resolve_placeholders(step_text, test_data)
+    tokens_in = tokens_out = 0
     for attempt in range(2):
-        passed, message = await run_step(
+        outcome = await run_step(
             tools=build_tools(), chat_model=chat_model, keyword=keyword,
             step_text=resolved_text, scenario_name=scenario_name, history=history,
         )
-        if passed or attempt == 1:
-            return passed, message
-    return passed, message  # pragma: no cover — inatingível, loop sempre retorna acima
+        tokens_in += outcome.tokens_in
+        tokens_out += outcome.tokens_out
+        if outcome.passed or attempt == 1:
+            return StepOutcome(outcome.passed, outcome.message, tokens_in, tokens_out)
+    return StepOutcome(outcome.passed, outcome.message, tokens_in, tokens_out)  # pragma: no cover — inatingível
 
 
 async def teardown_target(state: RunState) -> RunState:

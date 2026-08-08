@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="frontend/public/img/logo.png" alt="Argus Agent" width="220">
+</p>
+
 # Argus Agent
 
 Agente de QA autônomo com persona de "QA sênior extremamente eficiente" — executa testes de aplicações **web**, **Android** e **iOS** a partir de um script BDD (Gherkin) e uma massa de testes, dirigindo a aplicação de verdade (Playwright para web, Appium para mobile) e produzindo relatórios com evidências por cenário.

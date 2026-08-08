@@ -17,6 +17,7 @@ tool-calling, só a lista de tools muda; ver build_web_tools/
 build_mobile_tools)."""
 import logging
 import re
+from dataclasses import dataclass
 
 from langchain.agents import create_agent
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -28,6 +29,21 @@ from src.agent.prompts import PERSONA_SYSTEM_PROMPT, build_step_prompt
 logger = logging.getLogger(__name__)
 
 _RESULT_RE = re.compile(r"RESULTADO:\s*(PASSOU|FALHOU)\s*(?:—|-)?\s*(.*)", re.IGNORECASE | re.DOTALL)
+
+
+@dataclass(frozen=True)
+class StepOutcome:
+    """`tokens_in`/`tokens_out` somam o `usage_metadata` de TODAS as
+    chamadas de LLM do loop ReAct deste passo (uma invocação pode fazer
+    várias idas e vindas de tool-calling antes do veredito final) — zero
+    nos caminhos de erro que nunca chegam a rodar o agente com sucesso
+    (limite de recursão, provider fora do ar): não dá pra recuperar uso
+    parcial de dentro da exceção do LangGraph."""
+
+    passed: bool
+    message: str
+    tokens_in: int = 0
+    tokens_out: int = 0
 
 # Mensagem canônica que o agente ReAct do LangGraph injeta quando o
 # contador interno de passos restantes (derivado do `recursion_limit`
@@ -49,10 +65,10 @@ async def run_step(
     scenario_name: str,
     history: list[str],
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
-) -> tuple[bool, str]:
-    """Executa um passo via um agente ReAct fresco. Retorna (passou, mensagem).
-    Nunca levanta — qualquer falha (erro de ferramenta/provider, loop do
-    agente, resposta sem veredito claro) vira `(False, motivo)`."""
+) -> StepOutcome:
+    """Executa um passo via um agente ReAct fresco. Nunca levanta — qualquer
+    falha (erro de ferramenta/provider, loop do agente, resposta sem
+    veredito claro) vira `StepOutcome(passed=False, ...)`."""
     prompt = build_step_prompt(keyword=keyword, step_text=step_text, scenario_name=scenario_name, history=history)
 
     try:
@@ -66,22 +82,30 @@ async def run_step(
             config={"recursion_limit": max_iterations * 2 + 6},
         )
     except GraphRecursionError:
-        return False, f"O agente excedeu o limite de {max_iterations} chamadas de ferramenta para este passo (loop do agente)."
+        return StepOutcome(
+            False, f"O agente excedeu o limite de {max_iterations} chamadas de ferramenta para este passo (loop do agente)."
+        )
     except Exception as e:
         logger.warning("Falha ao executar passo via LLM: %s", e)
-        return False, f"Erro ao executar o passo: {e}"
+        return StepOutcome(False, f"Erro ao executar o passo: {e}")
 
+    tokens_in, tokens_out = _sum_usage(result)
     final_content = _final_text(result)
     if _STEPS_EXHAUSTED_MARKER in final_content.lower():
-        return False, f"O agente excedeu o limite de {max_iterations} chamadas de ferramenta para este passo (loop do agente)."
+        return StepOutcome(
+            False, f"O agente excedeu o limite de {max_iterations} chamadas de ferramenta para este passo (loop do agente).",
+            tokens_in, tokens_out,
+        )
 
     match = _RESULT_RE.search(final_content)
     if not match:
-        return False, f"O agente não declarou um veredito claro. Última resposta: {final_content[:300]}"
+        return StepOutcome(
+            False, f"O agente não declarou um veredito claro. Última resposta: {final_content[:300]}", tokens_in, tokens_out
+        )
 
     passed = match.group(1).upper() == "PASSOU"
     reason = match.group(2).strip() or final_content.strip()
-    return passed, reason
+    return StepOutcome(passed, reason, tokens_in, tokens_out)
 
 
 def _final_text(agent_result: dict) -> str:
@@ -91,3 +115,17 @@ def _final_text(agent_result: dict) -> str:
         if isinstance(content, str) and content.strip():
             return content
     return ""
+
+
+def _sum_usage(agent_result: dict) -> tuple[int, int]:
+    """Soma `usage_metadata` (campo normalizado do LangChain, presente em
+    AIMessage de qualquer provider) de todas as chamadas de LLM do loop
+    ReAct deste passo — pode ser mais de uma (várias idas e vindas de
+    tool-calling antes do veredito final)."""
+    tokens_in = tokens_out = 0
+    for message in agent_result.get("messages", []):
+        usage = getattr(message, "usage_metadata", None)
+        if usage:
+            tokens_in += usage.get("input_tokens") or 0
+            tokens_out += usage.get("output_tokens") or 0
+    return tokens_in, tokens_out

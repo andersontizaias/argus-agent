@@ -82,6 +82,19 @@ def set_run_totals(run_id: str, *, total: int, passed: int, failed: int) -> None
         run.scenarios_failed = failed
 
 
+def add_run_usage(run_id: str, *, tokens_in: int, tokens_out: int, cost_usd: float) -> None:
+    """Incrementa (não substitui) — chamada uma vez por passo, então o
+    total da run vai crescendo conforme os passos rodam (visível ao vivo
+    via SSE, mesmo padrão dos totais de cenários)."""
+    with db.session_scope() as session:
+        run = session.get(models.Run, run_id)
+        if not run:
+            return
+        run.tokens_in += tokens_in
+        run.tokens_out += tokens_out
+        run.cost_usd += cost_usd
+
+
 def set_run_artifacts_dir(run_id: str, path: str) -> None:
     with db.session_scope() as session:
         run = session.get(models.Run, run_id)

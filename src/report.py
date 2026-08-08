@@ -44,6 +44,8 @@ _HTML_TEMPLATE = Template("""\
   <div>Cenários: {{ run.scenarios_passed }}/{{ run.scenarios_total }} passaram</div>
   <div>Plataforma: {{ run.platform }}</div>
   <div>Modelo: {{ run.llm_provider }}/{{ run.llm_model }}</div>
+  <div>Tokens: {{ run.tokens_in }} in / {{ run.tokens_out }} out</div>
+  <div>Custo estimado: ${{ "%.4f"|format(run.cost_usd) }}</div>
 </div>
 {% for scenario in scenarios %}
 <div class="scenario">
@@ -153,6 +155,9 @@ def compile_report(run_id: str) -> Path:
             "scenarios_total": run.scenarios_total,
             "scenarios_passed": run.scenarios_passed,
             "scenarios_failed": run.scenarios_failed,
+            "tokens_in": run.tokens_in,
+            "tokens_out": run.tokens_out,
+            "cost_usd": run.cost_usd,
             "duration_ms": _duration_ms(run.started_at, run.finished_at),
             "created_at": run.created_at.isoformat() if run.created_at else None,
             "started_at": run.started_at.isoformat() if run.started_at else None,
