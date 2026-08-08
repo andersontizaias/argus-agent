@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { useConfig, useHealth, useSaveConfig, useTestLlmProvider } from '@/lib/queries';
+import { useApiKeys, useConfig, useCreateApiKey, useHealth, useRevokeApiKey, useSaveConfig, useTestLlmProvider } from '@/lib/queries';
 import type { ProjectConfig } from '@/types/api';
 
 // Lista declarativa dos providers LLM suportados — mesmo padrão do
@@ -35,6 +35,78 @@ const LLM_PROVIDERS: {
   },
   { id: 'custom', label: 'Custom (compatível com OpenAI)', apiKeyField: 'custom_llm_api_key', needsBaseUrl: true, baseUrlField: 'custom_llm_base_url' },
 ];
+
+function ApiKeysSection() {
+  const { t } = useTranslation();
+  const { data: keys } = useApiKeys();
+  const createKey = useCreateApiKey();
+  const revokeKey = useRevokeApiKey();
+  const [name, setName] = useState('');
+  const [justCreatedKey, setJustCreatedKey] = useState<string | null>(null);
+
+  async function handleCreate() {
+    if (!name.trim()) return;
+    try {
+      const created = await createKey.mutateAsync(name.trim());
+      setJustCreatedKey(created.key);
+      setName('');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function handleRevoke(keyId: string) {
+    try {
+      await revokeKey.mutateAsync(keyId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('config.apiKeys')}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">{t('config.apiKeysHelp')}</p>
+
+        {justCreatedKey && (
+          <div className="rounded-md border border-[hsl(var(--warn))] bg-[hsl(var(--warn)/0.1)] p-3 space-y-1">
+            <p className="text-sm font-medium">{t('config.apiKeyShownOnce')}</p>
+            <code className="block break-all rounded bg-background/50 p-2 text-xs">{justCreatedKey}</code>
+            <Button variant="ghost" size="sm" onClick={() => setJustCreatedKey(null)}>{t('config.apiKeyDismiss')}</Button>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <Input placeholder={t('config.apiKeyNamePlaceholder')} value={name} onChange={(e) => setName(e.target.value)} className="flex-1" />
+          <Button onClick={handleCreate} disabled={createKey.isPending || !name.trim()}>
+            {createKey.isPending ? t('config.creating') : t('config.apiKeyCreate')}
+          </Button>
+        </div>
+
+        <div className="space-y-2">
+          {(Array.isArray(keys) ? keys : []).map((key) => (
+            <div key={key.id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm">
+              <div>
+                <span className="font-medium">{key.name}</span>{' '}
+                <span className="text-muted-foreground">argus_{key.prefix}_...</span>
+                {key.revoked && <Badge variant="destructive" className="ml-2">{t('config.apiKeyRevoked')}</Badge>}
+              </div>
+              {!key.revoked && (
+                <Button variant="ghost" size="sm" onClick={() => handleRevoke(key.id)} disabled={revokeKey.isPending}>
+                  {t('config.apiKeyRevoke')}
+                </Button>
+              )}
+            </div>
+          ))}
+          {Array.isArray(keys) && keys.length === 0 && <p className="text-sm text-muted-foreground">{t('config.apiKeysEmpty')}</p>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export function ConfigPage() {
   const { t } = useTranslation();
@@ -179,6 +251,8 @@ export function ConfigPage() {
           </Button>
         </CardContent>
       </Card>
+
+      <ApiKeysSection />
     </div>
   );
 }

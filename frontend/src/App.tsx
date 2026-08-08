@@ -1,19 +1,20 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
 import { Navbar } from '@/components/layout/Navbar';
 import { ConfigPage } from '@/pages/ConfigPage';
-import { PlaceholderPage } from '@/pages/PlaceholderPage';
+import { NewRunPage } from '@/pages/NewRunPage';
+import { RunsListPage } from '@/pages/RunsListPage';
+import { RunDetailPage } from '@/pages/RunDetailPage';
 
 export default function App() {
-  const { t } = useTranslation();
-
   return (
     <div className="min-h-screen">
       <Navbar />
       <main>
         <Routes>
           <Route path="/" element={<Navigate to="/runs" replace />} />
-          <Route path="/runs" element={<PlaceholderPage title={t('nav.runs')} />} />
+          <Route path="/runs" element={<RunsListPage />} />
+          <Route path="/runs/new" element={<NewRunPage />} />
+          <Route path="/runs/:runId" element={<RunDetailPage />} />
           <Route path="/config" element={<ConfigPage />} />
           <Route path="*" element={<Navigate to="/runs" replace />} />
         </Routes>

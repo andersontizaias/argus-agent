@@ -194,4 +194,86 @@ describe('ConfigPage', () => {
 
     expect(await screen.findByText('Conexão ok')).toBeInTheDocument();
   });
+
+  it('lists existing API keys', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((path: string) => {
+        if (path === '/api/config') return Promise.resolve(jsonResponse(BASE_CONFIG));
+        if (path === '/api/health') return Promise.resolve(jsonResponse(BASE_HEALTH));
+        if (path === '/api/api-keys') {
+          return Promise.resolve(jsonResponse([
+            { id: 'k1', name: 'pipeline-ci', prefix: 'abcd1234', created_at: '2026-01-01T00:00:00', last_used_at: null, revoked: false },
+          ]));
+        }
+        return Promise.resolve(jsonResponse({}));
+      })
+    );
+    renderWithProviders(<ConfigPage />);
+    expect(await screen.findByText('pipeline-ci')).toBeInTheDocument();
+    expect(screen.getByText('argus_abcd1234_...')).toBeInTheDocument();
+  });
+
+  it('creates an API key and shows the full value once', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((path: string, opts?: RequestInit) => {
+        if (path === '/api/config') return Promise.resolve(jsonResponse(BASE_CONFIG));
+        if (path === '/api/health') return Promise.resolve(jsonResponse(BASE_HEALTH));
+        if (path === '/api/api-keys' && opts?.method === 'POST') {
+          return Promise.resolve(jsonResponse({
+            id: 'k1', name: 'pipeline-ci', prefix: 'abcd1234', key: 'argus_abcd1234_supersecretvalue', created_at: '2026-01-01T00:00:00',
+          }));
+        }
+        if (path === '/api/api-keys') return Promise.resolve(jsonResponse([]));
+        return Promise.resolve(jsonResponse({}));
+      })
+    );
+    renderWithProviders(<ConfigPage />);
+
+    await user.type(await screen.findByPlaceholderText('Nome da chave (ex.: pipeline-ci)'), 'pipeline-ci');
+    await user.click(screen.getByRole('button', { name: 'Criar chave' }));
+
+    expect(await screen.findByText('argus_abcd1234_supersecretvalue')).toBeInTheDocument();
+    expect(screen.getByText('Copie agora — essa chave não será mostrada de novo.')).toBeInTheDocument();
+  });
+
+  it('revokes an API key', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn((path: string, opts?: RequestInit) => {
+      if (path === '/api/config') return Promise.resolve(jsonResponse(BASE_CONFIG));
+      if (path === '/api/health') return Promise.resolve(jsonResponse(BASE_HEALTH));
+      if (path === '/api/api-keys/k1' && opts?.method === 'DELETE') return Promise.resolve(jsonResponse({ status: 'ok' }));
+      if (path === '/api/api-keys') {
+        return Promise.resolve(jsonResponse([
+          { id: 'k1', name: 'pipeline-ci', prefix: 'abcd1234', created_at: '2026-01-01T00:00:00', last_used_at: null, revoked: false },
+        ]));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<ConfigPage />);
+
+    const revokeButton = await screen.findByRole('button', { name: 'Revogar' });
+    await user.click(revokeButton);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/api-keys/k1', expect.objectContaining({ method: 'DELETE' }));
+    });
+  });
+
+  it('shows an empty state when there are no API keys', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((path: string) => {
+        if (path === '/api/config') return Promise.resolve(jsonResponse(BASE_CONFIG));
+        if (path === '/api/health') return Promise.resolve(jsonResponse(BASE_HEALTH));
+        if (path === '/api/api-keys') return Promise.resolve(jsonResponse([]));
+        return Promise.resolve(jsonResponse({}));
+      })
+    );
+    renderWithProviders(<ConfigPage />);
+    expect(await screen.findByText('Nenhuma chave criada ainda.')).toBeInTheDocument();
+  });
 });

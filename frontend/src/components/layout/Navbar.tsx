@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Moon, Settings, Sun, TestTubeDiagonal } from 'lucide-react';
+import { Moon, Plus, Settings, Sun, TestTubeDiagonal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/lib/useTheme';
 import { useHealth } from '@/lib/queries';
@@ -39,9 +39,13 @@ export function Navbar() {
         </NavLink>
 
         <nav className="flex items-center gap-1">
-          <NavLink to="/runs" className={navItemClass}>
+          <NavLink to="/runs" end className={navItemClass}>
             <TestTubeDiagonal className="h-4 w-4" />
             {t('nav.runs')}
+          </NavLink>
+          <NavLink to="/runs/new" className={navItemClass}>
+            <Plus className="h-4 w-4" />
+            {t('nav.newRun')}
           </NavLink>
           <NavLink to="/config" className={navItemClass}>
             <Settings className="h-4 w-4" />
