@@ -112,6 +112,31 @@ def test_build_chat_model_custom_does_not_normalize_base_url():
     assert model.openai_api_base == "https://custom.example.com/api"
 
 
+@pytest.mark.parametrize("raw,expected", [
+    ("qwen3-coder:30b", "qwen3-coder:30b"),
+    ("ollama/qwen3-coder:30b", "qwen3-coder:30b"),
+    ("ollama_chat/qwen3-coder:30b", "qwen3-coder:30b"),
+])
+def test_normalize_ollama_model(raw, expected):
+    assert llm_providers._normalize_ollama_model(raw) == expected
+
+
+def test_build_chat_model_ollama_strips_litellm_prefix_from_model_copied_from_phalanx():
+    # phalanx (LiteLLM) usa "ollama/<modelo>" como convenção de roteamento;
+    # o Argus fala direto com a API do Ollama, que só reconhece o nome puro
+    # — colar o mesmo default_llm_model do phalanx sem isso dá "model not
+    # found" no Ollama.
+    store.set_setting("ollama_base_url", "http://localhost:11434")
+    model = llm_providers.build_chat_model("ollama", "ollama/qwen3-coder:30b", "token")
+    assert model.model_name == "qwen3-coder:30b"
+
+
+def test_build_chat_model_custom_does_not_strip_model_prefix():
+    store.set_setting("custom_llm_base_url", "http://localhost:8080/v1")
+    model = llm_providers.build_chat_model("custom", "ollama/some-model", "key")
+    assert model.model_name == "ollama/some-model"
+
+
 def test_build_chat_model_ollama_uses_configured_timeout():
     store.set_setting("ollama_base_url", "http://localhost:11434/v1")
     store.set_setting("ollama_timeout_seconds", "600")

@@ -98,6 +98,21 @@ def _normalize_ollama_base_url(base_url: str) -> str:
     return f"{base_url}/v1"
 
 
+# Prefixos de roteamento do LiteLLM (usados no phalanx, ex.:
+# "ollama/qwen3-coder:30b") — não fazem sentido aqui: falamos direto com a
+# API do Ollama (via ChatOpenAI), que só reconhece o nome puro do modelo
+# ("qwen3-coder:30b"). Um usuário copiando o `default_llm_model` de lá pra
+# cá recebe "model not found" sem esse strip.
+_OLLAMA_LITELLM_PREFIXES = ("ollama_chat/", "ollama/")
+
+
+def _normalize_ollama_model(model: str) -> str:
+    for prefix in _OLLAMA_LITELLM_PREFIXES:
+        if model.startswith(prefix):
+            return model[len(prefix):]
+    return model
+
+
 def build_chat_model(
     provider_id: str, model: str, api_key_plain: str, *, max_tokens: int = 1024, timeout: int | None = None,
 ):
@@ -119,6 +134,7 @@ def build_chat_model(
             raise ValueError(f"{provider.label} precisa de uma base URL configurada.")
         if provider.id == "ollama":
             base_url = _normalize_ollama_base_url(base_url)
+            model = _normalize_ollama_model(model)
         extra_body = {"options": {"num_ctx": OLLAMA_NUM_CTX}} if provider.id == "ollama" else None
         return ChatOpenAI(
             model=model,
