@@ -5,6 +5,11 @@ Agente de QA autônomo (web, Android, iOS) powered by LangGraph
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from a2a.server.routes import (
+    add_a2a_routes_to_fastapi,
+    create_agent_card_routes,
+    create_jsonrpc_routes,
+)
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +20,7 @@ from src import (  # noqa: F401 — import ajusta PATH/env pro Android SDK (efei
     android_env,
     store,
 )
+from src.a2a_server import build_agent_card, build_request_handler, default_base_url
 from src.auth import ApiKeyMiddleware
 from src.mcp_server import mcp_server
 from src.routers import api_keys as api_keys_router
@@ -87,6 +93,18 @@ app.include_router(health_router.router)
 app.include_router(api_keys_router.router)
 app.include_router(runs_router.router)
 app.router.routes.append(_mcp_mount)
+
+# A2A: usa rotas FastAPI de verdade (`add_a2a_routes_to_fastapi`), não um
+# Mount — evita as armadilhas de matching que o MCP teve (ver comentário do
+# exception handler mais abaixo). AgentCard fica em
+# /.well-known/agent-card.json (default do SDK), JSON-RPC em /a2a.
+_a2a_agent_card = build_agent_card(default_base_url())
+_a2a_request_handler = build_request_handler(_a2a_agent_card)
+add_a2a_routes_to_fastapi(
+    app,
+    agent_card_routes=create_agent_card_routes(_a2a_agent_card),
+    jsonrpc_routes=create_jsonrpc_routes(_a2a_request_handler, rpc_url="/a2a"),
+)
 
 # ─── SPA (React, buildado via `npm run build` em frontend/) ───────
 # Em dev, roda `npm run dev` em frontend/ (Vite dev server na :5173,
