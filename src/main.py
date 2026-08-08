@@ -9,7 +9,10 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from src import store
+from src import (  # noqa: F401 — import ajusta PATH/env pro Android SDK (efeito colateral)
+    android_env,
+    store,
+)
 from src.routers import api_keys as api_keys_router
 from src.routers import config as config_router
 from src.routers import health as health_router

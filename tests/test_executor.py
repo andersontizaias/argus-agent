@@ -14,7 +14,7 @@ from playwright.async_api import async_playwright
 from pydantic import PrivateAttr
 
 from src.agent.executor import run_step
-from src.tools.web import WebSession
+from src.tools.web import WebSession, build_web_tools
 
 FIXTURE_URL = f"file://{Path(__file__).parent / 'fixtures' / 'login.html'}"
 
@@ -72,7 +72,7 @@ async def test_run_step_executes_real_tools_and_reports_pass(session):
     ])
 
     passed, message = await run_step(
-        session=session, chat_model=model, keyword="Quando",
+        tools=build_web_tools(session), chat_model=model, keyword="Quando",
         step_text='preencho usuário "standard_user"', scenario_name="Login válido", history=[],
     )
 
@@ -85,7 +85,7 @@ async def test_run_step_reports_failure_from_llm_verdict(session):
     model = ScriptedChatModel(responses=[AIMessage(content="RESULTADO: FALHOU — elemento não encontrado")])
 
     passed, message = await run_step(
-        session=session, chat_model=model, keyword="Então",
+        tools=build_web_tools(session), chat_model=model, keyword="Então",
         step_text="vejo a lista de produtos", scenario_name="Login inválido", history=[],
     )
 
@@ -97,7 +97,7 @@ async def test_run_step_no_clear_verdict_counts_as_failure(session):
     model = ScriptedChatModel(responses=[AIMessage(content="Cliquei no botão de login.")])
 
     passed, message = await run_step(
-        session=session, chat_model=model, keyword="Quando",
+        tools=build_web_tools(session), chat_model=model, keyword="Quando",
         step_text="clico em entrar", scenario_name="Login válido", history=[],
     )
 
@@ -112,7 +112,7 @@ async def test_run_step_recursion_limit_counts_as_failure(session):
     model = ScriptedChatModel(responses=infinite_snapshots)
 
     passed, message = await run_step(
-        session=session, chat_model=model, keyword="Quando",
+        tools=build_web_tools(session), chat_model=model, keyword="Quando",
         step_text="clico em entrar", scenario_name="Login válido", history=[], max_iterations=2,
     )
 
@@ -127,7 +127,7 @@ async def test_run_step_model_error_counts_as_failure(session):
 
     model = BrokenModel(responses=[])
     passed, message = await run_step(
-        session=session, chat_model=model, keyword="Quando",
+        tools=build_web_tools(session), chat_model=model, keyword="Quando",
         step_text="clico em entrar", scenario_name="Login válido", history=[],
     )
 

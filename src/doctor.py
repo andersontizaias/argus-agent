@@ -7,7 +7,10 @@ from dataclasses import dataclass
 
 import sqlalchemy
 
-from src import db
+from src import (  # noqa: F401 — import ajusta PATH/env pro Android SDK (efeito colateral)
+    android_env,
+    db,
+)
 from src.settings import artifacts_dir
 
 

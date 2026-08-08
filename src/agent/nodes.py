@@ -9,8 +9,12 @@ subgrafo ReAct do executor, ver src/agent/executor.py). O estado do
 LangGraph (`RunState`) carrega só `run_id`/`error` — cenários/passos/status
 vivem no banco (`src.store`), que é a única fonte de verdade tanto para o
 relatório quanto pra retomar uma run interrompida."""
+import asyncio
 import logging
+from collections.abc import Callable
 
+from appium import webdriver
+from appium.options.android import UiAutomator2Options
 from playwright.async_api import Browser, BrowserContext, Playwright, async_playwright
 
 from src import store
@@ -25,17 +29,35 @@ from src.bdd import (
 from src.events import publish_event
 from src.llm_providers import build_chat_model, get_provider
 from src.report import compile_report as write_report
-from src.settings import artifacts_dir
-from src.tools.web import WebSession
+from src.settings import (
+    ANDROID_AVD_NAME,
+    ANDROID_EMULATOR_PORT,
+    APPIUM_PORT,
+    artifacts_dir,
+)
+from src.tools import device_android
+from src.tools.appium_server import AppiumHandle, start_appium, stop_appium
+from src.tools.binary_fetch import fetch_binary, validate_apk
+from src.tools.device_android import EmulatorHandle
+from src.tools.mobile import MobileSession, build_mobile_tools
+from src.tools.web import WebSession, build_web_tools
 from src.user_secrets import get_secret_plain
 
 logger = logging.getLogger(__name__)
 
-# Sessões vivas (navegador Playwright) por run_id — não são serializáveis,
-# então não entram no estado do grafo; um worker que reinicia perde a
-# sessão, não o progresso (que está no banco), e `provision_target`
+# Sessões vivas (navegador Playwright / driver Appium) por run_id — não são
+# serializáveis, então não entram no estado do grafo; um worker que reinicia
+# perde a sessão, não o progresso (que está no banco), e `provision_target`
 # reprovisiona do zero numa retomada.
 _SESSIONS: dict[str, "_RunResources"] = {}
+
+# O emulador Android é caro de bootar (dezenas de segundos) e fica
+# COMPARTILHADO entre runs — não é fechado no teardown de uma run individual,
+# só quando fica não-saudável (ver `_acquire_emulator`). O worker processa
+# uma run de cada vez (ver src/worker.py), então um único emulador
+# compartilhado basta e evita rebootar a cada run android.
+_SHARED_EMULATOR: EmulatorHandle | None = None
+_EMULATOR_LOCK = asyncio.Lock()
 
 
 class _RunResources:
@@ -44,9 +66,11 @@ class _RunResources:
         self.browser: Browser | None = None
         self.context: BrowserContext | None = None
         self.web_session: WebSession | None = None
+        self.appium: AppiumHandle | None = None
+        self.mobile_session: MobileSession | None = None
 
 
-async def _safe_close(resources: "_RunResources") -> None:
+async def _safe_close_web(resources: "_RunResources") -> None:
     try:
         if resources.context:
             await resources.context.close()
@@ -64,6 +88,22 @@ async def _safe_close(resources: "_RunResources") -> None:
         logger.warning("Falha ao parar o playwright: %s", e)
 
 
+async def _safe_close_android(resources: "_RunResources") -> None:
+    """Fecha a sessão do driver Appium e derruba o servidor Appium desta
+    run — o EMULADOR fica de pé (`_SHARED_EMULATOR`), pra ser reusado pela
+    próxima run android sem pagar o custo de boot de novo."""
+    try:
+        if resources.mobile_session:
+            await asyncio.to_thread(resources.mobile_session.driver.quit)
+    except Exception as e:
+        logger.warning("Falha ao encerrar a sessão do driver Appium: %s", e)
+    try:
+        if resources.appium:
+            await stop_appium(resources.appium)
+    except Exception as e:
+        logger.warning("Falha ao derrubar o servidor Appium: %s", e)
+
+
 async def _reset_app_state(resources: "_RunResources", app_url: str | None) -> None:
     """Cada cenário começa do zero: um context novo (cookies/localStorage/
     sessionStorage limpos) em vez de só navegar de volta — evita que um
@@ -78,6 +118,17 @@ async def _reset_app_state(resources: "_RunResources", app_url: str | None) -> N
         await page.goto(app_url, wait_until="load", timeout=30_000)
     if old_context:
         await old_context.close()
+
+
+async def _reset_android_app_state(session: MobileSession) -> None:
+    """Cada cenário reabre o app do zero — mais simples que uma limpeza
+    completa de dados (`mobile: clearApp`, que também derruba permissões
+    concedidas e efetivamente reinstalaria o app a cada cenário). Não limpa
+    dados em disco entre cenários; suficiente pro MVP, documentado como
+    limitação conhecida caso vire um problema real com apps que persistem
+    estado entre aberturas."""
+    await asyncio.to_thread(session.driver.terminate_app, session.app_package)
+    await asyncio.to_thread(session.driver.activate_app, session.app_package)
 
 
 def _fail(state: RunState, run_id: str, message: str) -> RunState:
@@ -111,9 +162,14 @@ async def provision_target(state: RunState) -> RunState:
     if not run:
         return _fail(state, run_id, "Run não encontrada.")
 
-    if run.platform != "web":
-        return _fail(state, run_id, f"Plataforma '{run.platform}' ainda não suportada nesta fase (só 'web').")
+    if run.platform == "web":
+        return await _provision_web(state, run_id, run)
+    if run.platform == "android":
+        return await _provision_android(state, run_id, run)
+    return _fail(state, run_id, f"Plataforma '{run.platform}' ainda não suportada nesta fase (só 'web' e 'android').")
 
+
+async def _provision_web(state: RunState, run_id: str, run) -> RunState:
     resources = _RunResources()
     try:
         resources.playwright = await async_playwright().start()
@@ -126,8 +182,61 @@ async def provision_target(state: RunState) -> RunState:
         if run.app_url:
             await page.goto(run.app_url, wait_until="load", timeout=30_000)
     except Exception as e:
-        await _safe_close(resources)
+        await _safe_close_web(resources)
         return _fail(state, run_id, f"Falha ao provisionar o navegador: {e}")
+
+    _SESSIONS[run_id] = resources
+    store.update_run_status(run_id, "running", started_at=True)
+    publish_event(run_id, "run_running", {})
+    return state
+
+
+async def _acquire_emulator() -> EmulatorHandle:
+    """Reusa o emulador compartilhado se ainda estiver saudável; senão
+    (primeira run, ou emulador travou/morreu entre runs) boota um novo —
+    mitigação do risco "emuladores frágeis" do PLANO.md (health-check +
+    auto-repair em vez de assumir que continua bom)."""
+    global _SHARED_EMULATOR
+    async with _EMULATOR_LOCK:
+        if _SHARED_EMULATOR is not None and await device_android.is_alive(_SHARED_EMULATOR):
+            return _SHARED_EMULATOR
+        if _SHARED_EMULATOR is not None:
+            await device_android.stop_emulator(_SHARED_EMULATOR)
+        _SHARED_EMULATOR = await device_android.boot_emulator(ANDROID_AVD_NAME, ANDROID_EMULATOR_PORT)
+        return _SHARED_EMULATOR
+
+
+async def _provision_android(state: RunState, run_id: str, run) -> RunState:
+    if not run.binary_url:
+        return _fail(state, run_id, "Run android sem binary_url (precisa apontar pro .apk).")
+
+    run_dir = artifacts_dir() / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    apk_path = run_dir / "app.apk"
+
+    resources = _RunResources()
+    try:
+        await fetch_binary(run.binary_url, run.binary_auth_secret, apk_path)
+        validate_apk(apk_path)
+
+        emulator = await _acquire_emulator()
+        resources.appium = await start_appium(APPIUM_PORT)
+
+        options = UiAutomator2Options()
+        options.udid = emulator.serial
+        options.app = str(apk_path)
+        options.automation_name = "UiAutomator2"
+        options.new_command_timeout = 300
+        options.auto_grant_permissions = True
+
+        driver = await asyncio.to_thread(webdriver.Remote, resources.appium.url, options=options)
+        app_package = str(driver.capabilities.get("appPackage") or "")
+        resources.mobile_session = MobileSession(
+            driver=driver, app_package=app_package, run_id=run_id, artifacts_dir=run_dir
+        )
+    except Exception as e:
+        await _safe_close_android(resources)
+        return _fail(state, run_id, f"Falha ao provisionar o dispositivo Android: {e}")
 
     _SESSIONS[run_id] = resources
     store.update_run_status(run_id, "running", started_at=True)
@@ -139,7 +248,33 @@ async def run_scenarios(state: RunState) -> RunState:
     run_id = state["run_id"]
     run = store.get_run(run_id)
     resources = _SESSIONS.get(run_id)
-    if not run or not resources or not resources.web_session:
+    if not run or not resources:
+        return state  # provision_target já falhou — nada a fazer aqui
+
+    # Vincula, a partir dos recursos provisionados, a sessão ativa e as
+    # funções que dependem da plataforma (montar as tools do passo, resetar
+    # o app entre cenários) — o resto desta função fica agnóstico de qual
+    # plataforma está rodando.
+    session: WebSession | MobileSession
+    if resources.web_session is not None:
+        web_session = resources.web_session
+        session = web_session
+
+        def build_tools() -> list:
+            return build_web_tools(web_session)
+
+        async def reset_between_scenarios() -> None:
+            await _reset_app_state(resources, run.app_url)
+    elif resources.mobile_session is not None:
+        mobile_session = resources.mobile_session
+        session = mobile_session
+
+        def build_tools() -> list:
+            return build_mobile_tools(mobile_session)
+
+        async def reset_between_scenarios() -> None:
+            await _reset_android_app_state(mobile_session)
+    else:
         return state  # provision_target já falhou — nada a fazer aqui
 
     provider = get_provider(run.llm_provider or "")
@@ -155,14 +290,13 @@ async def run_scenarios(state: RunState) -> RunState:
     chat_model = build_chat_model(provider.id, run.llm_model or provider.example_model, api_key)
 
     test_data = store.get_run_test_data(run_id)
-    session = resources.web_session
 
     for scenario in store.list_scenarios(run_id):
         if store.is_cancel_requested(run_id):
             store.update_scenario_status(scenario.id, "skipped")
             continue
 
-        await _reset_app_state(resources, run.app_url)
+        await reset_between_scenarios()
         store.update_scenario_status(scenario.id, "running", started_at=True)
         publish_event(run_id, "scenario_running", {"scenario_id": scenario.id, "name": scenario.name})
 
@@ -175,7 +309,7 @@ async def run_scenarios(state: RunState) -> RunState:
 
             session.set_step_context(scenario.position, step.position)
             passed, message = await _run_step_with_retry(
-                session=session, chat_model=chat_model, keyword=step.keyword,
+                build_tools=build_tools, chat_model=chat_model, keyword=step.keyword,
                 step_text=step.text, scenario_name=scenario.name, history=history,
                 test_data=test_data,
             )
@@ -201,7 +335,7 @@ async def run_scenarios(state: RunState) -> RunState:
 
 
 async def _run_step_with_retry(
-    *, session: WebSession, chat_model, keyword: str, step_text: str, scenario_name: str,
+    *, build_tools: Callable[[], list], chat_model, keyword: str, step_text: str, scenario_name: str,
     history: list[str], test_data: dict[str, str],
 ) -> tuple[bool, str]:
     """1 retry por passo com re-snapshot — resolve flakiness de render (o
@@ -210,7 +344,7 @@ async def _run_step_with_retry(
     resolved_text = resolve_placeholders(step_text, test_data)
     for attempt in range(2):
         passed, message = await run_step(
-            session=session, chat_model=chat_model, keyword=keyword,
+            tools=build_tools(), chat_model=chat_model, keyword=keyword,
             step_text=resolved_text, scenario_name=scenario_name, history=history,
         )
         if passed or attempt == 1:
@@ -221,8 +355,12 @@ async def _run_step_with_retry(
 async def teardown_target(state: RunState) -> RunState:
     run_id = state["run_id"]
     resources = _SESSIONS.pop(run_id, None)
-    if resources:
-        await _safe_close(resources)
+    if not resources:
+        return state
+    if resources.web_session is not None:
+        await _safe_close_web(resources)
+    elif resources.mobile_session is not None:
+        await _safe_close_android(resources)
     return state
 
 

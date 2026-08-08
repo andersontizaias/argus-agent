@@ -11,7 +11,10 @@ import logging
 import signal
 from types import FrameType
 
-from src import store
+from src import (  # noqa: F401 — import ajusta PATH/env pro Android SDK (efeito colateral)
+    android_env,
+    store,
+)
 from src.agent.graph import run_graph
 
 logger = logging.getLogger(__name__)

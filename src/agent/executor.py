@@ -8,7 +8,13 @@ NOVA do agente (mensagens vazias, só o prompt do passo) — contexto zerado
 por passo, por design: mantém os tokens baixos e evita que o histórico de um
 passo anterior confunda a decisão do atual. Continuidade entre passos vem só
 do resumo curto (`history`) embutido no prompt, não do histórico de
-mensagens do LLM."""
+mensagens do LLM.
+
+Recebe `tools` já construída pelo chamador (nodes.py) em vez de montar a
+lista sozinho a partir de uma sessão — mantém este módulo agnóstico de
+plataforma (web via Playwright, android via Appium usam a mesma engine de
+tool-calling, só a lista de tools muda; ver build_web_tools/
+build_mobile_tools)."""
 import logging
 import re
 
@@ -18,7 +24,6 @@ from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphRecursionError
 
 from src.agent.prompts import PERSONA_SYSTEM_PROMPT, build_step_prompt
-from src.tools.web import WebSession, build_web_tools
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +42,7 @@ DEFAULT_MAX_ITERATIONS = 8
 
 async def run_step(
     *,
-    session: WebSession,
+    tools: list,
     chat_model: BaseChatModel,
     keyword: str,
     step_text: str,
@@ -51,7 +56,6 @@ async def run_step(
     prompt = build_step_prompt(keyword=keyword, step_text=step_text, scenario_name=scenario_name, history=history)
 
     try:
-        tools = build_web_tools(session)
         agent = create_agent(
             model=chat_model,
             tools=tools,

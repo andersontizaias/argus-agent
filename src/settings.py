@@ -49,3 +49,10 @@ HOST = os.getenv("ARGUS_HOST", "127.0.0.1")
 PORT = int(os.getenv("ARGUS_PORT", "8765"))
 REQUIRE_API_KEY = _env_flag("ARGUS_REQUIRE_API_KEY")
 IS_LOOPBACK = HOST in ("127.0.0.1", "localhost", "::1")
+
+# AVD e portas do emulador/Appium — fixos via env por enquanto (não editável
+# pela UI ainda; o PLANO.md prevê isso como setting configurável numa fase
+# futura, quando F3 mostrar se um único AVD compartilhado basta pro uso real).
+ANDROID_AVD_NAME = os.getenv("ARGUS_ANDROID_AVD", "Pixel_9a")
+ANDROID_EMULATOR_PORT = int(os.getenv("ARGUS_ANDROID_EMULATOR_PORT", "5554"))
+APPIUM_PORT = int(os.getenv("APPIUM_BASE_PORT", "4723"))

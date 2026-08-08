@@ -100,6 +100,8 @@ def _run_summary_dict(run: models.Run) -> dict:
 async def create_run(payload: RunCreate):
     if payload.platform not in _VALID_PLATFORMS:
         return JSONResponse(status_code=400, content={"error": f"Plataforma inválida: {payload.platform}"})
+    if payload.platform != "web" and not payload.binary_url:
+        return JSONResponse(status_code=400, content={"error": f"Plataforma '{payload.platform}' exige binary_url."})
     if not payload.bdd_script.strip():
         return JSONResponse(status_code=400, content={"error": "Script BDD vazio."})
 
