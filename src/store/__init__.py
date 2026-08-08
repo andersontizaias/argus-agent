@@ -10,8 +10,14 @@ from src.store.api_keys import (
     revoke_api_key,
     verify_api_key,
 )
-from src.store.evidences import add_evidence, list_evidences
+from src.store.evidences import (
+    add_evidence,
+    get_evidence,
+    list_evidences,
+    list_evidences_by_step,
+)
 from src.store.runs import (
+    count_runs,
     create_run,
     get_run,
     get_run_test_data,
@@ -37,8 +43,10 @@ from src.store.settings import get_setting, set_setting
 
 __all__ = [
     "add_evidence",
+    "count_runs",
     "create_api_key",
     "create_run",
+    "get_evidence",
     "get_run",
     "get_run_test_data",
     "get_scenario",
@@ -48,6 +56,7 @@ __all__ = [
     "is_cancel_requested",
     "list_api_keys",
     "list_evidences",
+    "list_evidences_by_step",
     "list_queued_run_ids",
     "list_runs",
     "list_scenarios",

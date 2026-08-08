@@ -120,8 +120,25 @@ def list_queued_run_ids() -> list[str]:
         return [r[0] for r in rows]
 
 
-def list_runs(*, limit: int = 20) -> list[models.Run]:
+def _filtered_runs_query(session, *, status: str | None, platform: str | None):
+    query = session.query(models.Run)
+    if status:
+        query = query.filter(models.Run.status == status)
+    if platform:
+        query = query.filter(models.Run.platform == platform)
+    return query
+
+
+def list_runs(
+    *, limit: int = 20, offset: int = 0, status: str | None = None, platform: str | None = None,
+) -> list[models.Run]:
     with db.session_scope() as session:
-        rows = session.query(models.Run).order_by(models.Run.created_at.desc()).limit(limit).all()
+        query = _filtered_runs_query(session, status=status, platform=platform)
+        rows = query.order_by(models.Run.created_at.desc()).offset(offset).limit(limit).all()
         session.expunge_all()
         return rows
+
+
+def count_runs(*, status: str | None = None, platform: str | None = None) -> int:
+    with db.session_scope() as session:
+        return _filtered_runs_query(session, status=status, platform=platform).count()

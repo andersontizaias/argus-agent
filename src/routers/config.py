@@ -6,18 +6,18 @@ reenviando esse placeholder preserva o valor já salvo em vez de sobrescrever
 com lixo."""
 import asyncio
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from src import store, user_secrets
+from src import auth, store, user_secrets
 from src.llm_providers import (
     SUPPORTED_PROVIDERS,
     build_chat_model,
     is_provider_configured,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(auth.require_api_key)])
 
 
 def _mask_secret(value: str) -> str:

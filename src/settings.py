@@ -21,7 +21,17 @@ def checkpoints_db_path() -> Path:
     return base / "checkpoints.db"
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    """"1"/"true"/"yes"/"on" contam como verdadeiro (case-insensitive) —
+    aceitar só o literal "true" é uma pegadinha comum: `FLAG=1`, a
+    convenção mais usada em shell/Unix, silenciosamente virava False."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 HOST = os.getenv("ARGUS_HOST", "127.0.0.1")
 PORT = int(os.getenv("ARGUS_PORT", "8765"))
-REQUIRE_API_KEY = os.getenv("ARGUS_REQUIRE_API_KEY", "false").lower() == "true"
+REQUIRE_API_KEY = _env_flag("ARGUS_REQUIRE_API_KEY")
 IS_LOOPBACK = HOST in ("127.0.0.1", "localhost", "::1")

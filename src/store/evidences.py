@@ -12,6 +12,26 @@ def add_evidence(run_id: str, step_id: str | None, type_: str, label: str, path:
     return row
 
 
+def get_evidence(evidence_id: str) -> models.Evidence | None:
+    with db.session_scope() as session:
+        row = session.get(models.Evidence, evidence_id)
+        if row:
+            session.expunge(row)
+        return row
+
+
+def list_evidences_by_step(step_id: str) -> list[models.Evidence]:
+    with db.session_scope() as session:
+        rows = (
+            session.query(models.Evidence)
+            .filter(models.Evidence.step_id == step_id)
+            .order_by(models.Evidence.created_at)
+            .all()
+        )
+        session.expunge_all()
+        return rows
+
+
 def list_evidences(run_id: str) -> list[models.Evidence]:
     with db.session_scope() as session:
         rows = (

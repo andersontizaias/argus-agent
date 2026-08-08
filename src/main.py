@@ -10,8 +10,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from src import store
+from src.routers import api_keys as api_keys_router
 from src.routers import config as config_router
 from src.routers import health as health_router
+from src.routers import runs as runs_router
 from src.settings import HOST, PORT
 
 BASE_DIR = Path(__file__).parent.parent
@@ -36,6 +38,8 @@ app = FastAPI(
 
 app.include_router(config_router.router)
 app.include_router(health_router.router)
+app.include_router(api_keys_router.router)
+app.include_router(runs_router.router)
 
 # ─── SPA (React, buildado via `npm run build` em frontend/) ───────
 # Em dev, roda `npm run dev` em frontend/ (Vite dev server na :5173,
