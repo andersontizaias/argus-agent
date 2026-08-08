@@ -28,10 +28,17 @@ _SNAPSHOT_JS = """
     const style = window.getComputedStyle(el);
     return style.visibility !== 'hidden' && style.display !== 'none';
   };
-  const selector = 'a[href], button, input, select, textarea, ' +
+  // Interativos (ações miram aqui) + informativos (headings, alertas,
+  // regiões live) — passos "Then"/"Então" verificam mensagens de erro/
+  // status que quase sempre são texto puro (ex.: um <h3> de erro), não
+  // teriam refs sem essa segunda categoria, e o snapshot é a única forma
+  // do agente "ver" a página (não manda screenshot pro LLM).
+  const interactiveSelector = 'a[href], button, input, select, textarea, ' +
     '[role="button"], [role="link"], [role="textbox"], [role="checkbox"], ' +
     '[role="radio"], [role="combobox"], [onclick], [tabindex]';
-  document.querySelectorAll(selector).forEach((el) => {
+  const infoSelector = 'h1, h2, h3, h4, h5, h6, ' +
+    '[role="alert"], [role="alertdialog"], [role="status"], [aria-live]';
+  document.querySelectorAll(interactiveSelector + ', ' + infoSelector).forEach((el) => {
     if (!isVisible(el)) return;
     idx += 1;
     const ref = 'e' + idx;
@@ -44,6 +51,8 @@ _SNAPSHOT_JS = """
       else if (tag === 'input') role = el.getAttribute('type') || 'textbox';
       else if (tag === 'select') role = 'combobox';
       else if (tag === 'textarea') role = 'textbox';
+      else if (/^h[1-6]$/.test(tag)) role = 'heading';
+      else if (el.hasAttribute('aria-live')) role = 'status';
       else role = 'generic';
     }
     const name = el.getAttribute('aria-label') || el.getAttribute('placeholder') ||

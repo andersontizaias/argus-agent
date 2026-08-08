@@ -32,6 +32,30 @@ async def test_snapshot_lists_visible_interactive_elements(session):
     assert "URL: file://" in text
 
 
+async def test_snapshot_includes_heading_text(session):
+    # Regressão real (achada rodando saucedemo.com de verdade): passos
+    # "Then" verificam mensagens de erro/status, quase sempre texto puro
+    # (heading, região de alerta) sem nenhum role interativo — sem isso o
+    # snapshot nunca "via" a mensagem de erro real do saucedemo (um <h3>).
+    text = await session.snapshot_text()
+    assert "heading" in text
+    assert '"Argus Test Shop"' in text
+
+
+async def test_snapshot_includes_alert_region_text_after_it_becomes_visible(session):
+    snapshot = await session.snapshot_text()
+    user_ref = _ref_for(snapshot, "Username")
+    pass_ref = _ref_for(snapshot, "Password")
+    login_ref = _ref_for(snapshot, "Login")
+    await session.fill(user_ref, "wrong_user")
+    await session.fill(pass_ref, "wrong_pass")
+    await session.click(login_ref)
+
+    text = await session.snapshot_text()
+    assert "alert" in text  # role="alert" explícito na fixture
+    assert "Usuário ou senha inválidos" in text
+
+
 async def test_snapshot_retries_once_after_execution_context_destroyed(session):
     # Regressão real (achada rodando contra saucedemo.com de verdade): o
     # evaluate() do snapshot pode pegar a página no meio de uma navegação

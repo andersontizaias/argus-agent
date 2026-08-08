@@ -56,9 +56,18 @@ async def session(tmp_path):
 
 
 async def test_run_step_executes_real_tools_and_reports_pass(session):
+    # A ref do campo de usuário não é mais necessariamente "e1" — o
+    # snapshot também captura headings/alertas (ver src/tools/web.py), que
+    # podem vir antes dele na ordem do DOM. Descobre a ref de verdade em
+    # vez de fixar um valor.
+    initial_snapshot = await session.snapshot_text()
+    user_ref = next(
+        line.split("]")[0][1:] for line in initial_snapshot.splitlines() if "Username" in line
+    )
+
     model = ScriptedChatModel(responses=[
         _tool_call_message("browser_snapshot", {}, "call-1"),
-        _tool_call_message("browser_fill", {"ref": "e1", "text": "standard_user"}, "call-2"),
+        _tool_call_message("browser_fill", {"ref": user_ref, "text": "standard_user"}, "call-2"),
         AIMessage(content="RESULTADO: PASSOU — usuário preenchido com sucesso"),
     ])
 
@@ -69,7 +78,7 @@ async def test_run_step_executes_real_tools_and_reports_pass(session):
 
     assert passed is True
     assert "sucesso" in message
-    assert await session.page.input_value('[data-argus-ref="e1"]') == "standard_user"
+    assert await session.page.input_value(f'[data-argus-ref="{user_ref}"]') == "standard_user"
 
 
 async def test_run_step_reports_failure_from_llm_verdict(session):
