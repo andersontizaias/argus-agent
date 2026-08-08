@@ -69,6 +69,10 @@ export function ConfigPage() {
 
   async function handleTest(providerId: string) {
     try {
+      // "Testar provider" precisa testar o que está na tela agora, não o
+      // que já estava salvo antes — sem isso, digitar uma chave/URL nova e
+      // clicar em testar sem salvar primeiro sempre dava "não configurado".
+      await saveConfig.mutateAsync(values);
       const result = await testProvider.mutateAsync(providerId);
       setTestResults((r) => ({ ...r, [providerId]: { ok: !!result.ok, message: result.ok ? t('config.testOk') : result.error || t('config.testFail') } }));
     } catch (e) {
@@ -137,9 +141,9 @@ export function ConfigPage() {
                 <Button
                   variant="outline"
                   onClick={() => handleTest(provider.id)}
-                  disabled={testProvider.isPending}
+                  disabled={testProvider.isPending || saveConfig.isPending}
                 >
-                  {testProvider.isPending ? t('config.testing') : t('config.testProvider')}
+                  {testProvider.isPending || saveConfig.isPending ? t('config.testing') : t('config.testProvider')}
                 </Button>
               </div>
               {provider.helpText && <p className="text-xs text-muted-foreground">{provider.helpText}</p>}

@@ -142,6 +142,38 @@ describe('ConfigPage', () => {
     expect(await screen.findByText('não configurado')).toBeInTheDocument();
   });
 
+  it('saves the current form values before testing (not just what was already saved)', async () => {
+    // Bug real reportado pelo usuário: digitar uma chave/URL nova e clicar
+    // em "Testar provider" sem clicar em "Salvar" antes sempre dava "não
+    // configurado", porque o teste lia só o que já estava persistido.
+    const user = userEvent.setup();
+    const callOrder: string[] = [];
+    const fetchMock = vi.fn((path: string, opts?: RequestInit) => {
+      if (path === '/api/config' && opts?.method === 'POST') {
+        callOrder.push('save');
+        return Promise.resolve(jsonResponse({ status: 'ok', message: 'saved' }));
+      }
+      if (path === '/api/config') return Promise.resolve(jsonResponse(BASE_CONFIG));
+      if (path === '/api/health') return Promise.resolve(jsonResponse(BASE_HEALTH));
+      if (path.startsWith('/api/config/test-llm-provider/')) {
+        callOrder.push('test');
+        return Promise.resolve(jsonResponse({ ok: true, provider: 'anthropic', model: 'claude-3-5-haiku-latest' }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<ConfigPage />);
+
+    const apiKeyInputs = await screen.findAllByPlaceholderText('Chave de API');
+    await user.type(apiKeyInputs[0], 'sk-ant-recem-digitada');
+
+    const buttons = screen.getAllByRole('button', { name: 'Testar provider' });
+    await user.click(buttons[0]);
+
+    await waitFor(() => expect(callOrder).toEqual(['save', 'test']));
+    expect(await screen.findByText('Conexão ok')).toBeInTheDocument();
+  });
+
   it('tests a provider and shows the result', async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
