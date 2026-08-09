@@ -70,7 +70,7 @@ jobs:
           STAGE="argus-agent-v${VERSION}"
           mkdir -p "package/$STAGE"
           cp -r src migrations scripts "package/$STAGE/"
-          cp alembic.ini pyproject.toml uv.lock README.md .env.example "package/$STAGE/"
+          cp alembic.ini pyproject.toml uv.lock README.md README.pt-BR.md .env.example "package/$STAGE/"
           mkdir -p "package/$STAGE/frontend"
           cp -r frontend/dist "package/$STAGE/frontend/dist"
           # __pycache__/.pyc ficam pra trás dos passos de teste/lint acima —

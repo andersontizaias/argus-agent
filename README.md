@@ -2,126 +2,156 @@
   <img src="frontend/public/img/logo.png" alt="Argus Agent" width="220">
 </p>
 
-# Argus Agent
+# 👁️ Argus Agent
 
-Agente de QA autônomo com persona de "QA sênior extremamente eficiente" — executa testes de aplicações **web**, **Android** e **iOS** a partir de um script BDD (Gherkin) e uma massa de testes, dirigindo a aplicação de verdade (Playwright para web, Appium para mobile) e produzindo relatórios com evidências por cenário.
+**Autonomous QA agent** with the persona of an "extremely efficient senior QA" — runs tests for **web**, **Android** and **iOS** apps from a BDD (Gherkin) script and a test data set, driving the real application (Playwright for web, Appium for mobile) and producing per-scenario reports with evidence.
 
-Instalado nativamente num Mac (sem Docker no caminho crítico — o simulador de iOS não roda em container), fala três protocolos de integração: **API REST**, **MCP** e **A2A**.
+![CI](https://github.com/andersontizaias/argus-agent/actions/workflows/ci.yml/badge.svg)
+![Python 3.12](https://img.shields.io/badge/python-3.12-blue?logo=python)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.139+-009688?logo=fastapi)
+![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-1C3C3C)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)
+![Private repo](https://img.shields.io/badge/repo-private-lightgrey)
 
-Veja o plano completo (arquitetura, decisões técnicas, fases) em [`PLANO.md`](./PLANO.md).
+**Language:** [🇧🇷 Português](README.pt-BR.md) · 🇺🇸 English (you are here)
 
-## Status
+---
 
-Fases F0–F7 entregues: fundação, agente web, REST + UI, Android, iOS, MCP, A2A, e o polish final (LaunchAgents, prune de runs antigas, custo/tokens no relatório, tap Homebrew) — ver a tabela de fases no [`PLANO.md`](./PLANO.md#fases-cada-uma-com-verificação-ponta-a-ponta).
+## 📑 Table of Contents
 
-## Stack
+- [✨ What is it?](#-what-is-it)
+- [🛠️ Tech Stack](#-tech-stack)
+- [📦 Installation](#-installation)
+  - [🍺 Homebrew (recommended)](#-homebrew-recommended)
+  - [📥 Tarball + install.sh](#-tarball--installsh)
+  - [🧑‍💻 Development checkout](#-development-checkout)
+- [🚀 Running](#-running)
+- [🔁 LaunchAgents (start on login)](#-launchagents-start-on-login)
+- [📖 Usage](#-usage)
+  - [📡 REST API](#-rest-api)
+  - [🔌 MCP](#-mcp)
+  - [🤝 A2A](#-a2a)
+- [⚙️ Configuration](#-configuration)
+- [📊 Reports](#-reports)
+- [🧪 Tests](#-tests)
+
+---
+
+## ✨ What is it?
+
+Installed natively on a Mac (no Docker on the critical path — the iOS simulator doesn't run in a container), Argus Agent speaks three integration protocols: **REST API**, **MCP** and **A2A**. Point it at a target application (a web URL or a mobile binary), give it a BDD script and test data, and it drives the app for real — a browser via Playwright, an Android emulator or iOS simulator via Appium — producing a report per scenario with screenshots and logs.
+
+Development went through phases F0–F7 (foundation, web agent, REST + UI, Android, iOS, MCP, A2A, and final polish — LaunchAgents, retention/prune, token/cost tracking, private Homebrew tap). See the full plan (architecture, technical decisions, phase-by-phase verification) in [`PLANO.md`](./PLANO.md) *(pt-BR only)*.
+
+## 🛠️ Tech Stack
 
 - **Backend**: Python 3.12, FastAPI, SQLAlchemy + Alembic (SQLite WAL), LangGraph
 - **Frontend**: React 19, Vite, TypeScript, Tailwind v4
-- **Automação**: Playwright (web), Appium — UiAutomator2 (Android) e XCUITest (iOS)
-- **Integração**: API REST (`X-API-Key`), MCP (Streamable HTTP em `/mcp`), A2A (`/a2a` + AgentCard)
+- **Automation**: Playwright (web), Appium — UiAutomator2 (Android) and XCUITest (iOS)
+- **Integration**: REST API (`X-API-Key`), MCP (Streamable HTTP at `/mcp`), A2A (`/a2a` + AgentCard)
 
-## Instalação
+## 📦 Installation
 
-Repositório **privado** — os caminhos abaixo (exceto o dev local) exigem um GitHub token com acesso de leitura ao repo.
+Private repository — every path below except the dev checkout needs a GitHub token with read access to the repo.
 
-### Homebrew (recomendado pra uso do dia a dia)
+### 🍺 Homebrew (recommended)
 
 ```bash
-export HOMEBREW_GITHUB_API_TOKEN=ghp_xxx   # token de leitura do repo privado
+export HOMEBREW_GITHUB_API_TOKEN=ghp_xxx   # read-only token for the private repo
 brew tap andersontizaias/argus
 brew install argus
 ```
 
-A primeira chamada de `argus`/`argus-worker`/`argus-doctor` faz o setup de verdade (`uv sync` + Playwright Chromium, ~200 MB, alguns minutos) num venv em `~/.argus/venv` — as próximas são instantâneas. Depois, veja [Rodando](#rodando) e, se quiser que suba sozinho no login, [LaunchAgents](#launchagents-subir-sozinho-no-login).
+The first call to `argus`/`argus-worker`/`argus-doctor` does the real setup (`uv sync` + Playwright Chromium, ~200 MB, a few minutes) into a venv at `~/.argus/venv` — later calls are instant. Then see [Running](#-running) and, if you want it to start on login, [LaunchAgents](#-launchagents-start-on-login).
 
-Pra atualizar a fórmula numa release nova, edite `url`/`version`/`sha256` no [tap](https://github.com/andersontizaias/homebrew-argus).
+To bump the formula for a new release, edit `url`/`version`/`sha256` in the [tap](https://github.com/andersontizaias/homebrew-argus).
 
-### Tarball + install.sh
+### 📥 Tarball + install.sh
 
-Alternativa ao Homebrew — baixa a release mais recente e prepara tudo em `~/argus`:
+An alternative to Homebrew — downloads the latest release and sets everything up in `~/argus`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/andersontizaias/argus-agent/main/scripts/install.sh -o install.sh
 GITHUB_TOKEN=ghp_xxx bash install.sh
 ```
 
-Rodar de novo atualiza para a versão mais recente sem tocar em `~/.argus/` (banco, artefatos, `.env`).
+Running it again updates to the latest version without touching `~/.argus/` (database, artifacts, `.env`).
 
-### Checkout de desenvolvimento
+### 🧑‍💻 Development checkout
 
 ```bash
 git clone git@github.com:andersontizaias/argus-agent.git
 cd argus-agent
-./scripts/bootstrap.sh   # idempotente: Homebrew, uv, node@22, Android/iOS
-                          # (checa e instrui, nunca baixa GB sozinho), Appium,
-                          # uv sync, Playwright, .env, migrações, build do
-                          # frontend — termina com um resumo do `argus-doctor`
+./scripts/bootstrap.sh   # idempotent: Homebrew, uv, node@22, Android/iOS
+                          # (checks and instructs, never downloads GBs on its
+                          # own), Appium, uv sync, Playwright, .env,
+                          # migrations, frontend build — ends with an
+                          # `argus-doctor` summary
 ```
 
-## Rodando
+## 🚀 Running
 
 ```bash
-uv run argus           # API + UI em http://127.0.0.1:8765
-uv run argus-worker    # processa as execuções (outro terminal)
+uv run argus           # API + UI at http://127.0.0.1:8765
+uv run argus-worker    # processes runs (separate terminal)
 ```
 
-Ou os dois + o Vite dev server juntos, num checkout de desenvolvimento:
+Or both plus the Vite dev server together, from a development checkout:
 
 ```bash
 ./scripts/dev.sh
 ```
 
-`GET /api/health` (e `uv run argus-doctor` na mesma lógica) reporta o estado de cada dependência nativa — banco, disco, Playwright, `adb`/`emulator`, `xcrun`, Appium.
+`GET /api/health` (and `uv run argus-doctor`, same logic) reports the state of every native dependency — database, disk, Playwright, `adb`/`emulator`, `xcrun`, Appium.
 
-## LaunchAgents (subir sozinho no login)
+## 🔁 LaunchAgents (start on login)
 
 ```bash
-./scripts/launchd/install.sh     # registra argus + argus-worker como LaunchAgents
-./scripts/launchd/uninstall.sh   # remove
+./scripts/launchd/install.sh     # registers argus + argus-worker as LaunchAgents
+./scripts/launchd/uninstall.sh   # removes them
 ```
 
-O `launchd` sobe os dois processos no login e reinicia se caírem (`KeepAlive`) — sem precisar de um terminal aberto. Logs em `~/.argus/logs/`.
+`launchd` starts both processes on login and restarts them if they crash (`KeepAlive`) — no open terminal needed. Logs at `~/.argus/logs/`.
 
-## Uso
+## 📖 Usage
 
-1. Abra `http://127.0.0.1:8765`, configure um provider de LLM em **Config** (chave testável na hora) e, se for usar a API fora da UI, gere uma **API key**.
-2. Em **Nova Execução**, escolha a plataforma (web via URL, Android/iOS via binário), cole o script BDD e a massa de testes.
-3. Acompanhe ao vivo em **Detalhe da Run** (cenários/passos mudando de estado, screenshots) ou via API.
+1. Open `http://127.0.0.1:8765`, set up an LLM provider in **Config** (testable on the spot) and, if you'll use the API outside the UI, generate an **API key**.
+2. In **New Run**, pick the platform (web via URL, Android/iOS via a binary), paste the BDD script and the test data.
+3. Follow along live in **Run Detail** (scenarios/steps changing state, screenshots) or via the API.
 
-### API REST
+### 📡 REST API
 
 `POST /api/runs` · `GET /api/runs` · `GET /api/runs/{id}` · `POST /api/runs/{id}/cancel` · `GET /api/runs/{id}/stream` (SSE) · `GET /api/runs/{id}/report[.html]` · `GET /api/runs/{id}/artifacts.zip` · `GET /api/evidences/{id}` · `GET`/`POST /api/config` · `POST /api/config/test-llm-provider/{id}` · CRUD `/api/api-keys` · `GET /api/health`.
 
-Autenticação por `X-API-Key: argus_<prefix>_<random>` (exibida uma vez na criação). Fluxo típico de CI: `POST /api/runs` → poll/SSE → exit code pelo `status` final → baixa `report.json`.
+Auth via `X-API-Key: argus_<prefix>_<random>` (shown once on creation). Typical CI flow: `POST /api/runs` → poll/SSE → exit code from the final `status` → download `report.json`.
 
-### MCP
+### 🔌 MCP
 
-Servidor Streamable HTTP em `/mcp`. Tools: `run_test`, `get_run_status`, `get_report`, `list_runs`, `cancel_run`.
+Streamable HTTP server at `/mcp`. Tools: `run_test`, `get_run_status`, `get_report`, `list_runs`, `cancel_run`.
 
 ```bash
 claude mcp add --transport http argus http://127.0.0.1:8765/mcp -H "X-API-Key: argus_..."
 ```
 
-### A2A
+### 🤝 A2A
 
-AgentCard em `/.well-known/agent-card.json`, rota `/a2a`. Skill `execute_qa_test` — envia a run como uma Message com uma Part de dados (JSON) e acompanha via streaming de status.
+AgentCard at `/.well-known/agent-card.json`, route `/a2a`. Skill `execute_qa_test` — send the run as a Message with one data Part (JSON) and follow along via status streaming.
 
-## Configuração
+## ⚙️ Configuration
 
-Variáveis de ambiente (`.env`, ver [`.env.example`](./.env.example)): `ARGUS_SECRET_KEY` (chave Fernet — cifra credenciais em repouso), `ARGUS_DB_PATH`, `ARGUS_ARTIFACTS_DIR`, `ARGUS_HOST`/`ARGUS_PORT`, `ARGUS_REQUIRE_API_KEY`, `APPIUM_BASE_PORT`, `ARGUS_ANDROID_AVD`/`ARGUS_ANDROID_EMULATOR_PORT`, `ARGUS_IOS_DEVICE`.
+Environment variables (`.env`, see [`.env.example`](./.env.example)): `ARGUS_SECRET_KEY` (Fernet key — encrypts credentials at rest), `ARGUS_DB_PATH`, `ARGUS_ARTIFACTS_DIR`, `ARGUS_HOST`/`ARGUS_PORT`, `ARGUS_REQUIRE_API_KEY`, `APPIUM_BASE_PORT`, `ARGUS_ANDROID_AVD`/`ARGUS_ANDROID_EMULATOR_PORT`, `ARGUS_IOS_DEVICE`.
 
-Provider de LLM, secrets de binário e retenção de relatórios (`retention_days`, 30 dias por padrão — `0` desliga o prune) ficam em `/api/config`, editáveis pela UI.
+LLM provider, binary-source secrets and report retention (`retention_days`, 30 days by default — `0` disables pruning) live in `/api/config`, editable from the UI.
 
-## Relatórios
+## 📊 Reports
 
-`~/.argus/artifacts/{run_id}/`: `report.json`, `report.html` (abre offline), `screenshots/`, `logs/agent.log` (massa de testes redigida — valores viram `***`). Cada relatório traz tokens de entrada/saída e custo estimado da run. Runs terminadas mais antigas que a retenção configurada são apagadas automaticamente pelo worker.
+`~/.argus/artifacts/{run_id}/`: `report.json`, `report.html` (opens offline), `screenshots/`, `logs/agent.log` (test data redacted — values become `***`). Every report includes input/output token counts and the run's estimated cost. Terminated runs older than the configured retention are automatically pruned by the worker.
 
-## Testes
+## 🧪 Tests
 
 ```bash
 uv run pytest --cov
 cd frontend && npm run test:coverage
 ```
 
-CI (`ci.yml`) roda ruff, mypy, pytest (cobertura ≥90%), complexidade (`xenon`), duplicação (`jscpd`), segurança (`pip-audit`, `npm audit`, gitleaks) e o build+testes do frontend. Releases (`release.yml`) disparam em tag `v*`, publicando o tarball + `install.sh` na GitHub Release.
+CI (`ci.yml`) runs ruff, mypy, pytest (coverage ≥90%), complexity (`xenon`), duplication (`jscpd`), security (`pip-audit`, `npm audit`, gitleaks) and the frontend build+tests. Releases (`release.yml`) trigger on `v*` tags, publishing the tarball + `install.sh` to the GitHub Release.
