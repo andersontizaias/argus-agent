@@ -25,6 +25,7 @@
   - [🍺 Homebrew (recommended)](#-homebrew-recommended)
   - [📥 Tarball + install.sh](#-tarball--installsh)
   - [🧑‍💻 Development checkout](#-development-checkout)
+  - [🧙 Installer wizard (.pkg/.dmg, experimental)](#-installer-wizard-pkgdmg-experimental)
 - [🚀 Running](#-running)
 - [🔁 LaunchAgents (start on login)](#-launchagents-start-on-login)
 - [📖 Usage](#-usage)
@@ -90,6 +91,14 @@ cd argus-agent
                           # migrations, frontend build — ends with an
                           # `argus-doctor` summary
 ```
+
+### 🧙 Installer wizard (.pkg/.dmg, experimental)
+
+A double-click, GUI version of the tarball install above — asks for the
+GitHub token via a native dialog, then runs the same `install.sh`/
+`bootstrap.sh` in a visible Terminal window. Not signed/notarized yet, so
+Gatekeeper may warn on first open. Build it yourself for now: see
+[`packaging/macos/README.md`](./packaging/macos/README.md).
 
 ## 🚀 Running
 

@@ -25,6 +25,7 @@
   - [🍺 Homebrew (recomendado)](#-homebrew-recomendado)
   - [📥 Tarball + install.sh](#-tarball--installsh)
   - [🧑‍💻 Checkout de desenvolvimento](#-checkout-de-desenvolvimento)
+  - [🧙 Instalador com wizard (.pkg/.dmg, experimental)](#-instalador-com-wizard-pkgdmg-experimental)
 - [🚀 Rodando](#-rodando)
 - [🔁 LaunchAgents (subir sozinho no login)](#-launchagents-subir-sozinho-no-login)
 - [📖 Uso](#-uso)
@@ -89,6 +90,15 @@ cd argus-agent
                           # uv sync, Playwright, .env, migrações, build do
                           # frontend — termina com um resumo do `argus-doctor`
 ```
+
+### 🧙 Instalador com wizard (.pkg/.dmg, experimental)
+
+Uma versão visual, de duplo clique, da instalação por tarball acima — pede
+o token do GitHub por uma caixa de diálogo nativa e roda o mesmo
+`install.sh`/`bootstrap.sh` numa janela do Terminal visível. Ainda não
+assinado/notarizado, então o Gatekeeper pode avisar no primeiro uso. Por
+enquanto, compile você mesmo: veja
+[`packaging/macos/README.md`](./packaging/macos/README.md).
 
 ## 🚀 Rodando
 

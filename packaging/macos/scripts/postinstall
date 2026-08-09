@@ -1,0 +1,35 @@
+#!/bin/bash
+# Argus Agent — postinstall do instalador .pkg (wizard visual).
+#
+# O pacote é "--nopayload": não instala nenhum arquivo por si só. Esse
+# script É a instalação — pede o token do GitHub por uma caixa de diálogo
+# nativa (o Installer.app não dá um terminal pra gente usar `read`) e abre
+# uma janela do Terminal rodando exatamente scripts/install.sh + bootstrap.sh
+# (os mesmos que uma instalação manual usa) — um único caminho de instalação
+# pra manter, o .pkg só troca "copiar/colar comandos no terminal" por
+# "clicar em Instalar".
+#
+# O `installer` do macOS SEMPRE roda scripts como root quando chamado via
+# `sudo installer` (linha de comando); via Installer.app (duplo clique) um
+# pacote sem payload como este pode rodar como o usuário do console — não dá
+# pra saber qual dos dois vai acontecer sem testar na hora, então este
+# script se protege rodando a parte de verdade (osascript + Homebrew, que se
+# recusa a rodar como root) sempre como o usuário do console, nunca como
+# root, usando `launchctl asuser` pra herdar a sessão gráfica dele.
+set -euo pipefail
+
+CONSOLE_USER="$(stat -f%Su /dev/console)"
+
+if [[ -z "${CONSOLE_USER}" || "${CONSOLE_USER}" == "root" || "${CONSOLE_USER}" == "loginwindow" ]]; then
+  osascript -e 'display alert "Argus Agent" message "Could not identify the logged-in user — open Terminal and run scripts/install.sh manually (see the README)." as critical' || true
+  exit 1
+fi
+
+WIZARD_SCRIPT="$(dirname "$0")/run-wizard.sh"
+
+if [[ "$(id -u)" -eq 0 ]]; then
+  CONSOLE_UID="$(id -u "${CONSOLE_USER}")"
+  launchctl asuser "${CONSOLE_UID}" sudo -u "${CONSOLE_USER}" /bin/bash "${WIZARD_SCRIPT}"
+else
+  /bin/bash "${WIZARD_SCRIPT}"
+fi

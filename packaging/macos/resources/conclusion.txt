@@ -1,0 +1,9 @@
+A Terminal window has opened (or will ask you for a GitHub token first) — that's where the real setup happens. Keep it open until it prints "Press Return to close this window."
+
+If no Terminal window appeared, or a system dialog asked for permission for "Installer" or "Terminal" to control your computer, check Terminal (it may be behind other windows) and System Settings → Privacy & Security → Automation.
+
+Once it finishes, run:
+  argus            (API + UI at http://127.0.0.1:8765)
+  argus-worker     (in another terminal)
+
+from ~/argus, or see the README for the Homebrew tap and LaunchAgents (start on login) options.
