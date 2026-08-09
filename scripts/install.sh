@@ -107,10 +107,14 @@ uv run alembic upgrade head
 
 echo
 echo "✓ Argus Agent ${VERSION} instalado em ${INSTALL_DIR}"
-echo "  Nesta versão só a plataforma 'web' está disponível (Android/iOS chegam em fases futuras)."
 echo
 echo "Para rodar:"
 echo "  cd ${INSTALL_DIR} && uv run argus          # API + UI em http://127.0.0.1:8765"
 echo "  cd ${INSTALL_DIR} && uv run argus-worker   # processa as execuções (em outro terminal)"
+echo
+echo "Runs 'web' já funcionam com o setup acima. Para Android/iOS (Android Studio,"
+echo "Xcode, Appium), rode: cd ${INSTALL_DIR} && ./scripts/bootstrap.sh"
+echo
+echo "Sobe sozinho no login? cd ${INSTALL_DIR} && ./scripts/launchd/install.sh"
 echo
 echo "Rode este script de novo a qualquer momento para atualizar — ~/.argus/ (banco, artefatos, .env) nunca é tocado."
