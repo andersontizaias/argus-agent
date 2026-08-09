@@ -92,10 +92,12 @@ cd argus-agent
 
 Uma versão visual, de duplo clique, da instalação por tarball acima — abre
 uma janela do Terminal e roda o mesmo `install.sh`/`bootstrap.sh`,
-visivelmente. Ainda não
-assinado/notarizado, então o Gatekeeper pode avisar no primeiro uso. Por
-enquanto, compile você mesmo: veja
-[`packaging/macos/README.md`](./packaging/macos/README.md).
+visivelmente. Baixe o `ArgusAgent-Installer.dmg` na
+[release mais recente](https://github.com/andersontizaias/argus-agent/releases/latest)
+(compilado e anexado automaticamente pelo `release.yml`). Ainda não
+assinado/notarizado, então o Gatekeeper pode avisar no primeiro uso — veja
+[`packaging/macos/README.md`](./packaging/macos/README.md) pra detalhes e
+contornos.
 
 ## 🚀 Rodando
 

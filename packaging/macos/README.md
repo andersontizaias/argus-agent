@@ -54,14 +54,21 @@ If a paid Developer ID ever gets added, sign with `productsign` (for the
 
 ## Building
 
+CI builds and attaches `ArgusAgent-Installer.dmg` to every GitHub Release
+automatically (`.github/workflows/release.yml`, `installer` job — runs on
+`macos-latest`, since `pkgbuild`/`productbuild`/`hdiutil` are macOS-only).
+No manual step needed to publish it.
+
+To build locally (for testing changes under `packaging/macos/`):
+
 ```bash
 packaging/macos/build-pkg.sh [wizard-version]   # -> build/ArgusAgentInstaller.pkg
 packaging/macos/build-dmg.sh                    # -> build/ArgusAgent-Installer.dmg
 ```
 
-`wizard-version` (default `1.0`) is the installer's own version, unrelated
-to the app's release version — bump it only when editing something under
-`packaging/macos/`.
+`wizard-version` (default `1.0`; CI passes the app's own version) is only
+metadata shown by `pkgutil --info` — it doesn't affect what the wizard
+downloads (always the latest release, resolved at install time).
 
 ## Testing
 

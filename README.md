@@ -93,9 +93,11 @@ cd argus-agent
 
 A double-click, GUI version of the tarball install above — opens a
 Terminal window and runs the same `install.sh`/`bootstrap.sh`, visibly.
-Not signed/notarized yet, so
-Gatekeeper may warn on first open. Build it yourself for now: see
-[`packaging/macos/README.md`](./packaging/macos/README.md).
+Download `ArgusAgent-Installer.dmg` from the [latest release](https://github.com/andersontizaias/argus-agent/releases/latest)
+(built and attached automatically by `release.yml`). Not signed/notarized
+yet, so Gatekeeper may warn on first open — see
+[`packaging/macos/README.md`](./packaging/macos/README.md) for details
+and mitigations.
 
 ## 🚀 Running
 
