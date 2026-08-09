@@ -20,25 +20,25 @@ API_LABEL="com.andersontizaias.argus-agent.api"
 WORKER_LABEL="com.andersontizaias.argus-agent.worker"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "Erro: launchd é específico do macOS." >&2
+  echo "Error: launchd is macOS-only." >&2
   exit 1
 fi
 
 UV_PATH="$(command -v uv || true)"
 if [[ -z "${UV_PATH}" ]]; then
-  echo "Erro: 'uv' não encontrado no PATH. Instale antes: https://docs.astral.sh/uv/getting-started/installation/" >&2
+  echo "Error: 'uv' not found in PATH. Install it first: https://docs.astral.sh/uv/getting-started/installation/" >&2
   exit 1
 fi
 UV_BIN_DIR="$(dirname "${UV_PATH}")"
 
 if [[ ! -f "${INSTALL_DIR}/pyproject.toml" ]]; then
-  echo "Erro: ${INSTALL_DIR} não parece uma instalação do Argus Agent (sem pyproject.toml)." >&2
+  echo "Error: ${INSTALL_DIR} doesn't look like an Argus Agent installation (no pyproject.toml)." >&2
   exit 1
 fi
 
-echo "== Argus Agent — instalando LaunchAgents =="
-echo "Instalação: ${INSTALL_DIR}"
-echo "Logs:       ${LOG_DIR}"
+echo "== Argus Agent — installing LaunchAgents =="
+echo "Install dir: ${INSTALL_DIR}"
+echo "Logs:        ${LOG_DIR}"
 echo
 
 mkdir -p "${LOG_DIR}" "${AGENTS_DIR}"
@@ -65,14 +65,14 @@ _install_agent() {
   launchctl bootout "${UID_GUI}/${label}" 2>/dev/null || true
   launchctl bootstrap "${UID_GUI}" "${dest}"
   launchctl enable "${UID_GUI}/${label}"
-  echo "✓ ${label} instalado e rodando (${dest})"
+  echo "✓ ${label} installed and running (${dest})"
 }
 
 _install_agent "${API_LABEL}" "${SCRIPT_DIR}/com.andersontizaias.argus-agent.api.plist.template"
 _install_agent "${WORKER_LABEL}" "${SCRIPT_DIR}/com.andersontizaias.argus-agent.worker.plist.template"
 
 echo
-echo "Pronto. Os dois processos sobem sozinhos a partir do próximo login/reboot."
-echo "  Ver status:  launchctl list | grep andersontizaias"
-echo "  Ver logs:    tail -f ${LOG_DIR}/argus.log ${LOG_DIR}/argus-worker.log"
-echo "  Desinstalar: scripts/launchd/uninstall.sh"
+echo "Done. Both processes will start automatically from the next login/reboot."
+echo "  Check status: launchctl list | grep andersontizaias"
+echo "  View logs:    tail -f ${LOG_DIR}/argus.log ${LOG_DIR}/argus-worker.log"
+echo "  Uninstall:    scripts/launchd/uninstall.sh"

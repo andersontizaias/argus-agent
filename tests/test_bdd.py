@@ -75,17 +75,17 @@ def test_parse_expands_scenario_outline_examples():
 
 
 def test_parse_empty_script_raises():
-    with pytest.raises(BddParseError, match="vazio"):
+    with pytest.raises(BddParseError, match="Empty"):
         parse_bdd_script("")
 
 
 def test_parse_invalid_syntax_raises():
-    with pytest.raises(BddParseError, match="sintaxe"):
+    with pytest.raises(BddParseError, match="Syntax error"):
         parse_bdd_script("isso não é um script Gherkin válido {{{")
 
 
 def test_parse_script_without_scenarios_raises():
-    with pytest.raises(BddParseError, match="Nenhum cenário"):
+    with pytest.raises(BddParseError, match="No scenario"):
         parse_bdd_script("# language: pt\nFuncionalidade: Vazia\n")
 
 

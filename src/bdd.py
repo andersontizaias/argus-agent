@@ -51,17 +51,17 @@ def parse_bdd_script(source: str) -> list[ParsedScenario]:
     Levanta BddParseError com uma mensagem legível em caso de sintaxe inválida
     ou script sem nenhum cenário."""
     if not source or not source.strip():
-        raise BddParseError("Script BDD vazio.")
+        raise BddParseError("Empty BDD script.")
 
     try:
         document = Parser().parse(source)
     except Exception as e:  # gherkin levanta CompositeParserException/ParserException
-        raise BddParseError(f"Erro de sintaxe no script BDD: {e}") from e
+        raise BddParseError(f"Syntax error in the BDD script: {e}") from e
 
     document_with_uri = cast(GherkinDocumentWithURI, {**document, "uri": "run.feature"})
     pickles = Compiler().compile(document_with_uri)
     if not pickles:
-        raise BddParseError("Nenhum cenário encontrado no script BDD.")
+        raise BddParseError("No scenario found in the BDD script.")
 
     scenarios = []
     for pickle in pickles:
@@ -103,7 +103,7 @@ def resolve_placeholders(text: str, test_data: dict[str, str]) -> str:
     def _replace(match: re.Match[str]) -> str:
         key = match.group(1)
         if key not in test_data:
-            raise BddParseError(f"Placeholder <{key}> não encontrado na massa de testes.")
+            raise BddParseError(f"Placeholder <{key}> not found in the test data.")
         return str(test_data[key])
 
     return _PLACEHOLDER_RE.sub(_replace, text)
@@ -116,5 +116,5 @@ def validate_test_data(scenarios: list[ParsedScenario], test_data: dict[str, str
     missing = sorted(scan_placeholders(scenarios) - test_data.keys())
     if missing:
         raise BddParseError(
-            "Placeholders sem valor na massa de testes: " + ", ".join(f"<{m}>" for m in missing)
+            "Placeholders missing from the test data: " + ", ".join(f"<{m}>" for m in missing)
         )

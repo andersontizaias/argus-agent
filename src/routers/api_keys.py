@@ -15,7 +15,7 @@ class ApiKeyCreate(BaseModel):
 @router.post("/api/api-keys")
 async def create_api_key(payload: ApiKeyCreate):
     if not payload.name.strip():
-        return JSONResponse(status_code=400, content={"error": "Nome da chave não pode ser vazio."})
+        return JSONResponse(status_code=400, content={"error": "Key name can't be empty."})
     row, full_key = store.create_api_key(payload.name.strip())
     return {
         "id": row.id,
@@ -44,5 +44,5 @@ async def list_api_keys():
 @router.delete("/api/api-keys/{key_id}")
 async def revoke_api_key(key_id: str):
     if not store.revoke_api_key(key_id):
-        return JSONResponse(status_code=404, content={"error": "Chave não encontrada."})
+        return JSONResponse(status_code=404, content={"error": "Key not found."})
     return {"status": "ok"}

@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Argus Agent",
-    description="Agente de QA autônomo — web, Android e iOS",
+    description="Autonomous QA agent — web, Android and iOS",
     version=VERSION,
     lifespan=lifespan,
 )

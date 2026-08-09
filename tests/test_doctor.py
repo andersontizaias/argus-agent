@@ -11,7 +11,7 @@ def test_check_binary_not_found(monkeypatch):
     monkeypatch.setattr(doctor.shutil, "which", lambda _name: None)
     result = doctor._check_binary("totally-not-a-real-binary")
     assert result.ok is False
-    assert "não encontrado" in result.detail
+    assert "not found" in result.detail
 
 
 def test_check_binary_found_without_version_args(monkeypatch):

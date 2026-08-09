@@ -93,7 +93,7 @@ def test_save_ollama_timeout_seconds_rejects_non_numeric():
     with _client() as client:
         resp = client.post("/api/config", json={"ollama_timeout_seconds": "abc"})
     assert resp.status_code == 400
-    assert "número inteiro" in resp.json()["error"]
+    assert "whole number" in resp.json()["error"]
 
 
 def test_test_llm_provider_unknown_returns_404():
@@ -106,7 +106,7 @@ def test_test_llm_provider_not_configured_returns_400():
     with _client() as client:
         resp = client.post("/api/config/test-llm-provider/anthropic")
     assert resp.status_code == 400
-    assert "não está configurado" in resp.json()["error"]
+    assert "isn't configured" in resp.json()["error"]
 
 
 def test_test_llm_provider_success(monkeypatch):

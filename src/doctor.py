@@ -35,7 +35,7 @@ def _check_disk() -> CheckResult:
         usage = shutil.disk_usage(artifacts_dir())
         free_gb = usage.free / (1024**3)
         ok = free_gb > 2.0
-        return CheckResult("disk", ok, f"{free_gb:.1f} GB livres em {artifacts_dir()}")
+        return CheckResult("disk", ok, f"{free_gb:.1f} GB free at {artifacts_dir()}")
     except Exception as e:
         return CheckResult("disk", False, str(e))
 
@@ -43,7 +43,7 @@ def _check_disk() -> CheckResult:
 def _check_binary(name: str, version_args: list[str] | None = None) -> CheckResult:
     path = shutil.which(name)
     if not path:
-        return CheckResult(name, False, "não encontrado no PATH")
+        return CheckResult(name, False, "not found in PATH")
     if not version_args:
         return CheckResult(name, True, path)
     try:
@@ -63,7 +63,7 @@ def _check_playwright() -> CheckResult:
             browser.close()
         return CheckResult("playwright", True, "Chromium ok")
     except Exception as e:
-        return CheckResult("playwright", False, f"{e!s} — rode `uv run playwright install chromium`")
+        return CheckResult("playwright", False, f"{e!s} — run `uv run playwright install chromium`")
 
 
 def run_checks() -> list[CheckResult]:

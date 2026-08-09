@@ -25,7 +25,7 @@ def test_create_run_requires_valid_platform():
     with _client() as client:
         resp = client.post("/api/runs", json={"platform": "desktop", "bdd_script": VALID_BDD})
     assert resp.status_code == 400
-    assert "Plataforma inválida" in resp.json()["error"]
+    assert "Invalid platform" in resp.json()["error"]
 
 
 def test_create_run_rejects_empty_bdd_script():

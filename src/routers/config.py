@@ -73,9 +73,9 @@ class ConfigUpdate(BaseModel):
 @router.post("/api/config")
 async def save_config(update: ConfigUpdate):
     if update.ollama_timeout_seconds and not update.ollama_timeout_seconds.isdigit():
-        return JSONResponse(status_code=400, content={"error": "Timeout do Ollama precisa ser um número inteiro de segundos."})
+        return JSONResponse(status_code=400, content={"error": "Ollama timeout must be a whole number of seconds."})
     if update.retention_days and not update.retention_days.isdigit():
-        return JSONResponse(status_code=400, content={"error": "Retenção precisa ser um número inteiro de dias (0 desliga o prune)."})
+        return JSONResponse(status_code=400, content={"error": "Retention must be a whole number of days (0 disables pruning)."})
 
     # Mesmo raciocínio do get_config acima: salva a chave de todo provider,
     # exigida ou não — o bug original (`if not provider.needs_api_key:
@@ -102,10 +102,10 @@ async def test_llm_provider(provider_id: str):
     padrão do test-llm-provider do phalanx)."""
     provider = next((p for p in SUPPORTED_PROVIDERS if p.id == provider_id), None)
     if not provider:
-        return JSONResponse(status_code=404, content={"error": "Provider desconhecido."})
+        return JSONResponse(status_code=404, content={"error": "Unknown provider."})
 
     if not is_provider_configured(provider_id):
-        return JSONResponse(status_code=400, content={"error": f"{provider.label} não está configurado."})
+        return JSONResponse(status_code=400, content={"error": f"{provider.label} isn't configured."})
 
     # Provider cloud: qualquer example_model fixo sempre existe do lado do
     # provider. Ollama é diferente — só funciona se o modelo já tiver sido
@@ -133,4 +133,4 @@ async def test_llm_provider(provider_id: str):
         await asyncio.to_thread(model.invoke, "Reply with only the single word: pong")
         return {"ok": True, "provider": provider_id, "model": test_model}
     except Exception as e:
-        return JSONResponse(status_code=400, content={"error": f"Falha na conexão: {e!s}"})
+        return JSONResponse(status_code=400, content={"error": f"Connection failed: {e!s}"})

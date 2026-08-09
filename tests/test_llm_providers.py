@@ -29,7 +29,7 @@ def test_is_provider_configured_requires_base_url_for_ollama():
 
 
 def test_build_chat_model_unknown_provider_raises():
-    with pytest.raises(ValueError, match="Provider desconhecido"):
+    with pytest.raises(ValueError, match="Unknown provider"):
         llm_providers.build_chat_model("nope", "model", "key")
 
 

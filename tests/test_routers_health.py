@@ -20,7 +20,7 @@ def test_health_ok_when_all_checks_pass(monkeypatch):
 def test_health_degraded_when_a_check_fails(monkeypatch):
     monkeypatch.setattr(
         "src.routers.health.run_checks",
-        lambda: [CheckResult("database", True, "ok"), CheckResult("appium", False, "não encontrado")],
+        lambda: [CheckResult("database", True, "ok"), CheckResult("appium", False, "not found")],
     )
     with TestClient(app) as client:
         resp = client.get("/api/health")

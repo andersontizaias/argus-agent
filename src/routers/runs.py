@@ -97,7 +97,7 @@ async def list_runs(limit: int = 20, offset: int = 0, status: str | None = None,
 async def get_run(run_id: str):
     run = store.get_run(run_id)
     if not run:
-        return JSONResponse(status_code=404, content={"error": "Run não encontrada."})
+        return JSONResponse(status_code=404, content={"error": "Run not found."})
     return _run_detail_dict(run)
 
 
@@ -120,7 +120,7 @@ def _sse(event_type: str, data: dict) -> str:
 async def stream_run(run_id: str, request: Request, after: int = 0):
     run = store.get_run(run_id)
     if not run:
-        return JSONResponse(status_code=404, content={"error": "Run não encontrada."})
+        return JSONResponse(status_code=404, content={"error": "Run not found."})
 
     async def event_generator():
         last_seq = after
@@ -164,10 +164,10 @@ async def get_report(run_id: str):
 async def get_report_html(run_id: str):
     run = store.get_run(run_id)
     if not run or not run.artifacts_dir:
-        return JSONResponse(status_code=404, content={"error": "Relatório ainda não disponível."})
+        return JSONResponse(status_code=404, content={"error": "Report not available yet."})
     report_path = Path(run.artifacts_dir) / "report.html"
     if not report_path.exists():
-        return JSONResponse(status_code=404, content={"error": "report.html não encontrado."})
+        return JSONResponse(status_code=404, content={"error": "report.html not found."})
     return FileResponse(report_path, media_type="text/html")
 
 
@@ -175,10 +175,10 @@ async def get_report_html(run_id: str):
 async def get_artifacts_zip(run_id: str):
     run = store.get_run(run_id)
     if not run or not run.artifacts_dir:
-        return JSONResponse(status_code=404, content={"error": "Artefatos ainda não disponíveis."})
+        return JSONResponse(status_code=404, content={"error": "Artifacts not available yet."})
     artifacts_dir = Path(run.artifacts_dir)
     if not artifacts_dir.exists():
-        return JSONResponse(status_code=404, content={"error": "Diretório de artefatos não encontrado."})
+        return JSONResponse(status_code=404, content={"error": "Artifacts directory not found."})
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -197,8 +197,8 @@ async def get_artifacts_zip(run_id: str):
 async def get_evidence(evidence_id: str):
     evidence = store.get_evidence(evidence_id)
     if not evidence:
-        return JSONResponse(status_code=404, content={"error": "Evidência não encontrada."})
+        return JSONResponse(status_code=404, content={"error": "Evidence not found."})
     path = Path(evidence.path)
     if not path.exists():
-        return JSONResponse(status_code=404, content={"error": "Arquivo da evidência não encontrado em disco."})
+        return JSONResponse(status_code=404, content={"error": "Evidence file not found on disk."})
     return FileResponse(path)

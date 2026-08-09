@@ -29,7 +29,7 @@ def is_authorized(x_api_key: str | None) -> bool:
 async def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
     if is_authorized(x_api_key):
         return
-    detail = "Header X-API-Key obrigatório." if not x_api_key else "X-API-Key inválida ou revogada."
+    detail = "X-API-Key header required." if not x_api_key else "Invalid or revoked X-API-Key."
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail)
 
 
@@ -38,5 +38,5 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         if not is_authorized(request.headers.get("x-api-key")):
-            return JSONResponse({"error": "X-API-Key obrigatória ou inválida."}, status_code=401)
+            return JSONResponse({"error": "X-API-Key required or invalid."}, status_code=401)
         return await call_next(request)

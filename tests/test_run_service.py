@@ -31,7 +31,7 @@ def test_create_run_web_happy_path(configured_provider):
 
 
 def test_create_run_android_requires_binary_url(configured_provider):
-    with pytest.raises(run_service.RunServiceError, match="exige binary_url"):
+    with pytest.raises(run_service.RunServiceError, match="requires binary_url"):
         run_service.create_run(platform="android", bdd_script=VALID_BDD)
 
 
@@ -42,12 +42,12 @@ def test_create_run_android_happy_path_with_binary_url(configured_provider):
 
 
 def test_create_run_rejects_invalid_platform(configured_provider):
-    with pytest.raises(run_service.RunServiceError, match="Plataforma inválida"):
+    with pytest.raises(run_service.RunServiceError, match="Invalid platform"):
         run_service.create_run(platform="desktop", bdd_script=VALID_BDD)
 
 
 def test_create_run_rejects_empty_bdd_script(configured_provider):
-    with pytest.raises(run_service.RunServiceError, match="Script BDD vazio"):
+    with pytest.raises(run_service.RunServiceError, match="Empty BDD script"):
         run_service.create_run(platform="web", bdd_script="   ")
 
 
@@ -64,12 +64,12 @@ def test_create_run_rejects_missing_test_data_placeholder(configured_provider):
 
 def test_create_run_without_configured_provider_raises():
     # Sem a fixture configured_provider — nenhum default setado.
-    with pytest.raises(run_service.RunServiceError, match="Nenhum provider LLM configurado"):
+    with pytest.raises(run_service.RunServiceError, match="No LLM provider configured"):
         run_service.create_run(platform="web", bdd_script=VALID_BDD)
 
 
 def test_create_run_rejects_unknown_explicit_provider():
-    with pytest.raises(run_service.RunServiceError, match="Nenhum provider LLM configurado"):
+    with pytest.raises(run_service.RunServiceError, match="No LLM provider configured"):
         run_service.create_run(platform="web", bdd_script=VALID_BDD, llm_provider="not-a-provider")
 
 
@@ -81,7 +81,7 @@ def test_request_cancel_raises_not_found_for_unknown_run():
 def test_request_cancel_raises_when_already_terminal(configured_provider):
     run = run_service.create_run(platform="web", bdd_script=VALID_BDD, app_url="https://x")
     store.update_run_status(run.id, "passed", finished_at=True)
-    with pytest.raises(run_service.RunServiceError, match="já terminou"):
+    with pytest.raises(run_service.RunServiceError, match="already finished"):
         run_service.request_cancel(run.id)
 
 
@@ -114,14 +114,14 @@ def test_get_report_dict_raises_not_found():
 
 def test_get_report_dict_raises_when_run_has_no_artifacts_dir(configured_provider):
     run = run_service.create_run(platform="web", bdd_script=VALID_BDD, app_url="https://x")
-    with pytest.raises(run_service.RunServiceError, match="ainda não disponível"):
+    with pytest.raises(run_service.RunServiceError, match="not available yet"):
         run_service.get_report_dict(run.id)
 
 
 def test_get_report_dict_raises_when_report_json_missing(configured_provider, tmp_path):
     run = run_service.create_run(platform="web", bdd_script=VALID_BDD, app_url="https://x")
     store.set_run_artifacts_dir(run.id, str(tmp_path))
-    with pytest.raises(run_service.RunServiceError, match="report.json não encontrado"):
+    with pytest.raises(run_service.RunServiceError, match="report.json not found"):
         run_service.get_report_dict(run.id)
 
 

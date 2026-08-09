@@ -39,11 +39,11 @@ def create_run(
     llm_model: str | None = None,
 ) -> models.Run:
     if platform not in VALID_PLATFORMS:
-        raise RunServiceError(f"Plataforma inválida: {platform}")
+        raise RunServiceError(f"Invalid platform: {platform}")
     if platform != "web" and not binary_url:
-        raise RunServiceError(f"Plataforma '{platform}' exige binary_url.")
+        raise RunServiceError(f"Platform '{platform}' requires binary_url.")
     if not bdd_script.strip():
-        raise RunServiceError("Script BDD vazio.")
+        raise RunServiceError("Empty BDD script.")
 
     test_data = test_data or {}
     try:
@@ -55,7 +55,7 @@ def create_run(
     resolved_provider = llm_provider or store.get_setting("default_llm_provider")
     resolved_model = llm_model or store.get_setting("default_llm_model")
     if not resolved_provider or not get_provider(resolved_provider):
-        raise RunServiceError("Nenhum provider LLM configurado (defina um default em /config ou informe llm_provider).")
+        raise RunServiceError("No LLM provider configured (set a default in /config or pass llm_provider).")
 
     return store.create_run(
         platform=platform,
@@ -72,9 +72,9 @@ def create_run(
 def request_cancel(run_id: str) -> None:
     run = store.get_run(run_id)
     if not run:
-        raise RunNotFoundError(f"Run {run_id} não encontrada.")
+        raise RunNotFoundError(f"Run {run_id} not found.")
     if run.status in TERMINAL_STATUSES:
-        raise RunServiceError(f"Run já terminou (status: {run.status}).")
+        raise RunServiceError(f"Run has already finished (status: {run.status}).")
     store.request_cancel(run_id)
 
 
@@ -104,19 +104,19 @@ def run_summary_dict(run: models.Run) -> dict:
 def get_run_summary(run_id: str) -> dict:
     run = store.get_run(run_id)
     if not run:
-        raise RunNotFoundError(f"Run {run_id} não encontrada.")
+        raise RunNotFoundError(f"Run {run_id} not found.")
     return run_summary_dict(run)
 
 
 def get_report_dict(run_id: str) -> dict:
     run = store.get_run(run_id)
     if not run:
-        raise RunNotFoundError(f"Run {run_id} não encontrada.")
+        raise RunNotFoundError(f"Run {run_id} not found.")
     if not run.artifacts_dir:
-        raise RunServiceError("Relatório ainda não disponível — a run não terminou.")
+        raise RunServiceError("Report not available yet — the run hasn't finished.")
     report_path = Path(run.artifacts_dir) / "report.json"
     if not report_path.exists():
-        raise RunServiceError("report.json não encontrado.")
+        raise RunServiceError("report.json not found.")
     return json.loads(report_path.read_text(encoding="utf-8"))
 
 

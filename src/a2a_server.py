@@ -118,16 +118,15 @@ def _extract_run_params(context: RequestContext) -> dict:
             parsed = json.loads(text)
         except json.JSONDecodeError as e:
             raise run_service.RunServiceError(
-                "Não encontrei uma Part de dados com os parâmetros da run, e o texto da "
-                f"mensagem não é JSON válido: {e}"
+                "No data Part with the run parameters found, and the message text isn't "
+                f"valid JSON either: {e}"
             ) from e
         if isinstance(parsed, dict):
             return {k: v for k, v in parsed.items() if k in RUN_PARAM_KEYS}
 
     raise run_service.RunServiceError(
-        "Nenhum parâmetro de execução encontrado — envie uma Part de dados (ou texto JSON) "
-        "com platform/bdd_script/app_url/binary_url/etc., igual aos argumentos da tool MCP "
-        "run_test."
+        "No run parameters found — send a data Part (or JSON text) with platform/"
+        "bdd_script/app_url/binary_url/etc., same arguments as the run_test MCP tool."
     )
 
 

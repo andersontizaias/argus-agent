@@ -11,22 +11,22 @@ API_LABEL="com.andersontizaias.argus-agent.api"
 WORKER_LABEL="com.andersontizaias.argus-agent.worker"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "Erro: launchd é específico do macOS." >&2
+  echo "Error: launchd is macOS-only." >&2
   exit 1
 fi
 
-echo "== Argus Agent — removendo LaunchAgents =="
+echo "== Argus Agent — removing LaunchAgents =="
 
 for label in "${API_LABEL}" "${WORKER_LABEL}"; do
   plist="${AGENTS_DIR}/${label}.plist"
   launchctl bootout "${UID_GUI}/${label}" 2>/dev/null || true
   if [[ -f "${plist}" ]]; then
     rm -f "${plist}"
-    echo "✓ ${label} removido"
+    echo "✓ ${label} removed"
   else
-    echo "- ${label} não estava instalado"
+    echo "- ${label} wasn't installed"
   fi
 done
 
 echo
-echo "Pronto. Os processos já em execução foram encerrados; nada mais sobe sozinho no login."
+echo "Done. Any running processes were stopped; nothing will start automatically on login anymore."

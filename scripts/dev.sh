@@ -10,7 +10,7 @@ cd "${ROOT_DIR}"
 pids=()
 cleanup() {
   echo
-  echo "Encerrando..."
+  echo "Shutting down..."
   for pid in "${pids[@]}"; do
     kill "${pid}" 2>/dev/null || true
   done
@@ -18,7 +18,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "== argus (API + UI em http://127.0.0.1:8765) =="
+echo "== argus (API + UI at http://127.0.0.1:8765) =="
 uv run argus &
 pids+=("$!")
 

@@ -78,13 +78,13 @@ def test_extract_run_params_falls_back_to_json_text():
 
 def test_extract_run_params_raises_on_invalid_json_text():
     context = _make_context(text="isso não é json")
-    with pytest.raises(a2a_module.run_service.RunServiceError, match="não é JSON válido"):
+    with pytest.raises(a2a_module.run_service.RunServiceError, match="valid JSON"):
         _extract_run_params(context)
 
 
 def test_extract_run_params_raises_when_nothing_found():
     context = _make_context()
-    with pytest.raises(a2a_module.run_service.RunServiceError, match="Nenhum parâmetro"):
+    with pytest.raises(a2a_module.run_service.RunServiceError, match="No run parameters"):
         _extract_run_params(context)
 
 

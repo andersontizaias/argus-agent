@@ -21,19 +21,19 @@ _ok() { echo "  ✓ $*"; }
 _warn() { echo "  ⚠ $*" >&2; }
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "Erro: bootstrap.sh é específico do macOS." >&2
+  echo "Error: bootstrap.sh is macOS-only." >&2
   exit 1
 fi
 
 if [[ ! -f "${ROOT_DIR}/pyproject.toml" ]]; then
-  echo "Erro: ${ROOT_DIR} não parece o checkout do Argus Agent (sem pyproject.toml)." >&2
+  echo "Error: ${ROOT_DIR} doesn't look like the Argus Agent checkout (no pyproject.toml)." >&2
   exit 1
 fi
 
 # 1. Homebrew + uv + Node 22 ------------------------------------------------
 _step "Homebrew"
 if ! command -v brew >/dev/null 2>&1; then
-  _warn "não encontrado — instalando..."
+  _warn "not found — installing..."
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   if [[ -x /opt/homebrew/bin/brew ]]; then
     eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -41,19 +41,19 @@ if ! command -v brew >/dev/null 2>&1; then
     eval "$(/usr/local/bin/brew shellenv)"
   fi
 else
-  _ok "já instalado ($(brew --version | head -1))"
+  _ok "already installed ($(brew --version | head -1))"
 fi
 
 _step "uv"
 if ! command -v uv >/dev/null 2>&1; then
   brew install uv
 else
-  _ok "já instalado ($(uv --version))"
+  _ok "already installed ($(uv --version))"
 fi
 
 _step "Node.js 22"
 if command -v node >/dev/null 2>&1 && [[ "$(node -v)" == v22* ]]; then
-  _ok "já instalado ($(node -v))"
+  _ok "already installed ($(node -v))"
 else
   brew install node@22
   # node@22 é keg-only no Homebrew (não symlinka /opt/homebrew/bin/node pra
@@ -61,49 +61,49 @@ else
   # ajusta o PATH desta sessão do script, pro build do frontend abaixo.
   NODE22_BIN="$(brew --prefix node@22)/bin"
   export PATH="${NODE22_BIN}:${PATH}"
-  _ok "instalado via Homebrew — para usar fora deste script, adicione ${NODE22_BIN} ao seu PATH"
+  _ok "installed via Homebrew — to use it outside this script, add ${NODE22_BIN} to your PATH"
 fi
 
 # 2. Android -----------------------------------------------------------------
 _step "Android SDK"
 ANDROID_HOME_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-${HOME}/Library/Android/sdk}}"
 if [[ ! -d "${ANDROID_HOME_DIR}" ]]; then
-  _warn "SDK não encontrado em ${ANDROID_HOME_DIR}."
+  _warn "SDK not found at ${ANDROID_HOME_DIR}."
   cat <<EOF
-    Instale o Android Studio (https://developer.android.com/studio), abra-o
-    uma vez pra ele baixar o SDK padrão, e crie um AVD chamado
-    '${ARGUS_ANDROID_AVD:-Pixel_9a}' pelo Device Manager (qualquer imagem
-    de sistema recente arm64 serve). Rode este script de novo depois.
+    Install Android Studio (https://developer.android.com/studio), open it
+    once so it downloads the default SDK, and create an AVD named
+    '${ARGUS_ANDROID_AVD:-Pixel_9a}' via the Device Manager (any recent
+    arm64 system image works). Run this script again afterwards.
 EOF
 else
-  _ok "SDK em ${ANDROID_HOME_DIR}"
+  _ok "SDK at ${ANDROID_HOME_DIR}"
   AVD_NAME="${ARGUS_ANDROID_AVD:-Pixel_9a}"
   EMULATOR_BIN="${ANDROID_HOME_DIR}/emulator/emulator"
   if [[ -x "${EMULATOR_BIN}" ]] && "${EMULATOR_BIN}" -list-avds 2>/dev/null | grep -qx "${AVD_NAME}"; then
-    _ok "AVD '${AVD_NAME}' já existe"
+    _ok "AVD '${AVD_NAME}' already exists"
   else
-    _warn "AVD '${AVD_NAME}' não encontrado."
-    echo "    Crie pelo Device Manager do Android Studio com esse nome exato —"
-    echo "    baixa uma imagem de sistema (~1-2 GB), por isso o script não faz sozinho."
+    _warn "AVD '${AVD_NAME}' not found."
+    echo "    Create it via the Android Studio Device Manager with that exact name —"
+    echo "    it downloads a system image (~1-2 GB), so this script doesn't do it on its own."
   fi
 fi
 
 # 3. iOS -----------------------------------------------------------------
-_step "iOS (Xcode/simulador)"
+_step "iOS (Xcode/simulator)"
 if ! command -v xcrun >/dev/null 2>&1; then
-  _warn "Xcode Command Line Tools não encontrado — instale o Xcode pela App Store."
+  _warn "Xcode Command Line Tools not found — install Xcode from the App Store."
 else
   if xcrun simctl list runtimes 2>/dev/null | grep -qi "iOS"; then
-    _ok "runtime iOS instalado"
+    _ok "iOS runtime installed"
   else
-    _warn "nenhum runtime iOS instalado."
-    echo "    Rode manualmente: xcodebuild -downloadPlatform iOS  (baixa alguns GB)"
+    _warn "no iOS runtime installed."
+    echo "    Run manually: xcodebuild -downloadPlatform iOS  (downloads a few GB)"
   fi
   IOS_DEVICE_NAME="${ARGUS_IOS_DEVICE:-iPhone 15}"
   if xcrun simctl list devices 2>/dev/null | grep -q "${IOS_DEVICE_NAME} ("; then
-    _ok "simulador '${IOS_DEVICE_NAME}' já existe"
+    _ok "simulator '${IOS_DEVICE_NAME}' already exists"
   else
-    _warn "simulador '${IOS_DEVICE_NAME}' não encontrado — crie pelo Xcode (Window > Devices and Simulators)."
+    _warn "simulator '${IOS_DEVICE_NAME}' not found — create it via Xcode (Window > Devices and Simulators)."
   fi
 fi
 
@@ -112,21 +112,21 @@ _step "Appium"
 if ! command -v appium >/dev/null 2>&1; then
   npm install -g appium
 else
-  _ok "já instalado ($(appium --version))"
+  _ok "already installed ($(appium --version))"
 fi
 INSTALLED_DRIVERS="$(appium driver list --installed 2>/dev/null || true)"
 for driver in uiautomator2 xcuitest; do
   if grep -q "${driver}" <<<"${INSTALLED_DRIVERS}"; then
-    _ok "driver ${driver} já instalado"
+    _ok "driver ${driver} already installed"
   else
     appium driver install "${driver}"
   fi
 done
-appium driver doctor uiautomator2 || _warn "appium driver doctor uiautomator2 encontrou pendências (acima)"
-appium driver doctor xcuitest || _warn "appium driver doctor xcuitest encontrou pendências (acima)"
+appium driver doctor uiautomator2 || _warn "appium driver doctor uiautomator2 found issues (above)"
+appium driver doctor xcuitest || _warn "appium driver doctor xcuitest found issues (above)"
 
 # 5. Backend Python -----------------------------------------------------------------
-_step "Backend (uv sync + Playwright + .env + migrações)"
+_step "Backend (uv sync + Playwright + .env + migrations)"
 uv sync
 uv run playwright install chromium
 if [[ ! -f .env ]]; then
@@ -140,9 +140,9 @@ text = open(path).read()
 text = re.sub(r'^ARGUS_SECRET_KEY=.*$', f'ARGUS_SECRET_KEY={key}', text, flags=re.M)
 open(path, 'w').write(text)
 "
-  _ok ".env criado com ARGUS_SECRET_KEY nova"
+  _ok ".env created with a new ARGUS_SECRET_KEY"
 else
-  _ok ".env já existe (preservado)"
+  _ok ".env already exists (preserved)"
 fi
 uv run alembic upgrade head
 
@@ -153,17 +153,17 @@ if [[ -f frontend/package.json ]]; then
 else
   # Checkout instalado a partir do tarball de release (scripts/install.sh):
   # só o frontend/dist já compilado vem no pacote, sem frontend/package.json.
-  _ok "frontend/dist já vem pronto na release — nada a compilar"
+  _ok "frontend/dist already comes prebuilt in the release — nothing to build"
 fi
 
 # 7. Resumo final -----------------------------------------------------------------
 _step "argus-doctor"
 if uv run argus-doctor; then
   echo
-  echo "Pronto — tudo verde. Rode 'uv run argus' e 'uv run argus-worker' (ou"
-  echo "scripts/launchd/install.sh pra subir sozinho no login)."
+  echo "Done — all green. Run 'uv run argus' and 'uv run argus-worker' (or"
+  echo "scripts/launchd/install.sh to start them automatically on login)."
 else
   echo
-  _warn "algumas checagens acima falharam — normal se Android/iOS ainda não"
-  _warn "foram configurados (veja os avisos desta execução). Web funciona já."
+  _warn "some checks above failed — normal if Android/iOS haven't been"
+  _warn "set up yet (see the warnings from this run). Web already works."
 fi

@@ -121,7 +121,7 @@ def build_chat_model(
     diretamente para não acoplar a camada de LLM à de persistência."""
     provider = get_provider(provider_id)
     if not provider:
-        raise ValueError(f"Provider desconhecido: {provider_id}")
+        raise ValueError(f"Unknown provider: {provider_id}")
 
     resolved_timeout = _resolve_timeout(provider.id, timeout)
 
@@ -131,7 +131,7 @@ def build_chat_model(
 
         base_url = store.get_setting(_BASE_URL_SETTING_KEYS[provider.id])
         if not base_url:
-            raise ValueError(f"{provider.label} precisa de uma base URL configurada.")
+            raise ValueError(f"{provider.label} needs a configured base URL.")
         if provider.id == "ollama":
             base_url = _normalize_ollama_base_url(base_url)
             model = _normalize_ollama_model(model)
