@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NewRunPage } from './NewRunPage';
 import { renderWithProviders } from '@/test/render';
+import type { ProjectConfig } from '@/types/api';
 
 const navigateMock = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -12,6 +13,28 @@ vi.mock('react-router-dom', async () => {
 
 function jsonResponse(body: unknown, status = 200) {
   return { ok: status < 400, status, json: async () => body };
+}
+
+function fakeConfig(overrides: Partial<ProjectConfig> = {}): ProjectConfig {
+  return {
+    anthropic_api_key: '', openai_api_key: '', gemini_api_key: '', groq_api_key: '',
+    ollama_api_key: '', ollama_base_url: '', ollama_timeout_seconds: '',
+    custom_llm_api_key: '', custom_llm_base_url: '',
+    default_llm_provider: '', default_llm_model: '', retention_days: '30',
+    ...overrides,
+  };
+}
+
+/** Mocka fetch respondendo /api/config com `config` e qualquer outra
+ * chamada com um corpo vazio — usado pelos testes do dropdown de provider,
+ * que dependem do GET /api/config disparado no carregamento da página. */
+function stubFetchWithConfig(config: ProjectConfig) {
+  const fetchMock = vi.fn((path: string) => {
+    if (path === '/api/config') return Promise.resolve(jsonResponse(config));
+    return Promise.resolve(jsonResponse({}));
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
 }
 
 afterEach(() => {
@@ -49,7 +72,9 @@ describe('NewRunPage', () => {
     await user.click(screen.getByRole('button', { name: 'Criar execução' }));
 
     expect(await screen.findByText('Massa de testes não é um JSON válido.')).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // A página busca /api/config no carregamento (pro dropdown de provider)
+    // — o que não pode acontecer é criar a run com massa de testes inválida.
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/runs', expect.anything());
   });
 
   it('creates a run and navigates to its detail page on success', async () => {
@@ -95,5 +120,72 @@ describe('NewRunPage', () => {
     await user.click(screen.getByRole('button', { name: 'Criar execução' }));
 
     expect(await screen.findByText('Massa de testes não é um JSON válido.')).toBeInTheDocument();
+  });
+
+  it('fills the BDD script field when uploading a .feature file', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({})));
+    renderWithProviders(<NewRunPage />);
+
+    const file = new File(['Funcionalidade: Upload de arquivo'], 'login.feature', { type: 'text/plain' });
+    await user.upload(screen.getByLabelText('Enviar arquivo (.feature)'), file);
+
+    expect(await screen.findByDisplayValue('Funcionalidade: Upload de arquivo')).toBeInTheDocument();
+  });
+
+  it('fills the test data field when uploading a .json file', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({})));
+    renderWithProviders(<NewRunPage />);
+
+    const file = new File(['{"usuario_valido": "standard_user"}'], 'massa.json', { type: 'application/json' });
+    await user.upload(screen.getByLabelText('Enviar arquivo (.json)'), file);
+
+    expect(await screen.findByDisplayValue('{"usuario_valido": "standard_user"}')).toBeInTheDocument();
+  });
+
+  it('disables providers without credentials configured in the dropdown', async () => {
+    stubFetchWithConfig(fakeConfig({ anthropic_api_key: 'sk-a****' }));
+    renderWithProviders(<NewRunPage />);
+
+    const select = await screen.findByLabelText<HTMLSelectElement>('Provider default');
+    await waitFor(() => {
+      expect(select.querySelector('option[value="anthropic"]')).not.toBeDisabled();
+    });
+    expect(select.querySelector('option[value="openai"]')).toBeDisabled();
+    expect(select.querySelector('option[value="groq"]')).toBeDisabled();
+  });
+
+  it('auto-fills the model field with the configured default when picking that provider', async () => {
+    const user = userEvent.setup();
+    stubFetchWithConfig(fakeConfig({
+      anthropic_api_key: 'sk-a****',
+      default_llm_provider: 'anthropic',
+      default_llm_model: 'claude-3-5-haiku-latest',
+    }));
+    renderWithProviders(<NewRunPage />);
+
+    const select = await screen.findByLabelText<HTMLSelectElement>('Provider default');
+    await waitFor(() => expect(select.querySelector('option[value="anthropic"]')).not.toBeDisabled());
+    await user.selectOptions(select, 'anthropic');
+
+    expect(screen.getByLabelText('Modelo default')).toHaveValue('claude-3-5-haiku-latest');
+  });
+
+  it('auto-fills the model field with an example when picking a configured non-default provider', async () => {
+    const user = userEvent.setup();
+    stubFetchWithConfig(fakeConfig({
+      anthropic_api_key: 'sk-a****',
+      groq_api_key: 'gsk_****',
+      default_llm_provider: 'anthropic',
+      default_llm_model: 'claude-3-5-haiku-latest',
+    }));
+    renderWithProviders(<NewRunPage />);
+
+    const select = await screen.findByLabelText<HTMLSelectElement>('Provider default');
+    await waitFor(() => expect(select.querySelector('option[value="groq"]')).not.toBeDisabled());
+    await user.selectOptions(select, 'groq');
+
+    expect(screen.getByLabelText('Modelo default')).toHaveValue('llama-3.3-70b-versatile');
   });
 });

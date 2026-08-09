@@ -1,15 +1,17 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { Upload } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { useCreateRun } from '@/lib/queries';
+import { useConfig, useCreateRun } from '@/lib/queries';
 import { ApiError } from '@/lib/api';
+import { isProviderConfigured, LLM_PROVIDERS } from '@/lib/llmProviders';
 import type { RunPlatform } from '@/types/api';
 
 const BDD_PLACEHOLDER = `# language: pt
@@ -21,10 +23,31 @@ Funcionalidade: Login
     E clico em entrar
     Então vejo a lista de produtos`;
 
+/** Lê um <input type="file"> como texto e entrega pro callback — usado
+ * pelos dois botões de upload (BDD e massa de testes). Reseta o próprio
+ * input ao final pra que escolher o MESMO arquivo de novo (depois de editar
+ * o campo manualmente) ainda dispare onChange na próxima vez. */
+function readUploadedFile(e: React.ChangeEvent<HTMLInputElement>, onText: (text: string) => void, onError: () => void) {
+  const file = e.target.files?.[0];
+  const input = e.target;
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    onText(String(reader.result ?? ''));
+    input.value = '';
+  };
+  reader.onerror = () => {
+    onError();
+    input.value = '';
+  };
+  reader.readAsText(file);
+}
+
 export function NewRunPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const createRun = useCreateRun();
+  const { data: config } = useConfig();
 
   const [platform, setPlatform] = useState<RunPlatform>('web');
   const [appUrl, setAppUrl] = useState('');
@@ -35,6 +58,46 @@ export function NewRunPage() {
   const [llmProvider, setLlmProvider] = useState('');
   const [llmModel, setLlmModel] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+
+  const bddFileInputRef = useRef<HTMLInputElement>(null);
+  const testDataFileInputRef = useRef<HTMLInputElement>(null);
+
+  function handleBddFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    readUploadedFile(e, setBddScript, () => toast.error(t('newRun.fileReadError')));
+  }
+
+  function handleTestDataFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    readUploadedFile(
+      e,
+      (text) => {
+        setTestDataJson(text);
+        try {
+          JSON.parse(text);
+        } catch {
+          toast.error(t('newRun.invalidJson'));
+        }
+      },
+      () => toast.error(t('newRun.fileReadError'))
+    );
+  }
+
+  function handleProviderChange(id: string) {
+    setLlmProvider(id);
+    if (!id) {
+      setLlmModel('');
+      return;
+    }
+    // Não existe uma lista de "modelos cadastrados" por provider (só um
+    // default global) — se o provider escolhido é o default configurado,
+    // sugere o modelo default; senão, o exemplo do provider. Continua um
+    // campo editável, não trava no sugerido.
+    const provider = LLM_PROVIDERS.find((p) => p.id === id);
+    if (id === config?.default_llm_provider && config?.default_llm_model) {
+      setLlmModel(config.default_llm_model);
+    } else {
+      setLlmModel(provider?.exampleModel ?? '');
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -140,16 +203,46 @@ export function NewRunPage() {
             <CardTitle>{t('newRun.bddScript')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Textarea
-              aria-label={t('newRun.bddScript')}
-              rows={12}
-              placeholder={BDD_PLACEHOLDER}
-              value={bddScript}
-              onChange={(e) => setBddScript(e.target.value)}
-              required
-            />
             <div className="space-y-2">
-              <Label htmlFor="test-data">{t('newRun.testData')}</Label>
+              <div className="flex items-center justify-end">
+                <input
+                  ref={bddFileInputRef}
+                  type="file"
+                  accept=".feature,.txt,text/plain"
+                  aria-label={t('newRun.uploadBddFile')}
+                  className="hidden"
+                  onChange={handleBddFileChange}
+                />
+                <Button type="button" variant="outline" size="sm" onClick={() => bddFileInputRef.current?.click()}>
+                  <Upload className="h-4 w-4" />
+                  {t('newRun.uploadBddFile')}
+                </Button>
+              </div>
+              <Textarea
+                aria-label={t('newRun.bddScript')}
+                rows={12}
+                placeholder={BDD_PLACEHOLDER}
+                value={bddScript}
+                onChange={(e) => setBddScript(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="test-data">{t('newRun.testData')}</Label>
+                <input
+                  ref={testDataFileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  aria-label={t('newRun.uploadTestDataFile')}
+                  className="hidden"
+                  onChange={handleTestDataFileChange}
+                />
+                <Button type="button" variant="outline" size="sm" onClick={() => testDataFileInputRef.current?.click()}>
+                  <Upload className="h-4 w-4" />
+                  {t('newRun.uploadTestDataFile')}
+                </Button>
+              </div>
               <Textarea
                 id="test-data"
                 rows={4}
@@ -168,7 +261,18 @@ export function NewRunPage() {
           <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="llm-provider">{t('config.defaultProvider')}</Label>
-              <Input id="llm-provider" placeholder={t('newRun.useDefault')} value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)} />
+              <Select id="llm-provider" value={llmProvider} onChange={(e) => handleProviderChange(e.target.value)}>
+                <option value="">{t('newRun.useDefault')}</option>
+                {LLM_PROVIDERS.map((provider) => {
+                  const configured = isProviderConfigured(provider, config);
+                  return (
+                    <option key={provider.id} value={provider.id} disabled={!configured}>
+                      {provider.label}
+                      {!configured ? ` (${t('newRun.providerNotConfigured')})` : ''}
+                    </option>
+                  );
+                })}
+              </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="llm-model">{t('config.defaultModel')}</Label>

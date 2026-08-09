@@ -7,34 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useApiKeys, useConfig, useCreateApiKey, useHealth, useRevokeApiKey, useSaveConfig, useTestLlmProvider } from '@/lib/queries';
+import { LLM_PROVIDERS } from '@/lib/llmProviders';
 import type { ProjectConfig } from '@/types/api';
-
-// Lista declarativa dos providers LLM suportados — mesmo padrão do
-// ConfigPage do phalanx-agents: adicionar um provider novo é uma linha
-// aqui (o backend já resolve via src/llm_providers.py).
-const LLM_PROVIDERS: {
-  id: string;
-  label: string;
-  apiKeyField: keyof ProjectConfig;
-  needsBaseUrl?: boolean;
-  baseUrlField?: keyof ProjectConfig;
-  baseUrlPlaceholder?: string;
-  helpText?: string;
-  timeoutField?: keyof ProjectConfig;
-}[] = [
-  { id: 'anthropic', label: 'Anthropic', apiKeyField: 'anthropic_api_key' },
-  { id: 'openai', label: 'OpenAI', apiKeyField: 'openai_api_key' },
-  { id: 'google_genai', label: 'Google Gemini', apiKeyField: 'gemini_api_key' },
-  { id: 'groq', label: 'Groq', apiKeyField: 'groq_api_key' },
-  {
-    id: 'ollama', label: 'Ollama (local ou remoto)', apiKeyField: 'ollama_api_key',
-    needsBaseUrl: true, baseUrlField: 'ollama_base_url',
-    baseUrlPlaceholder: 'http://localhost:11434 ou http://<host-remoto>:11434',
-    helpText: 'A chave de API é opcional — só necessária se o servidor Ollama estiver atrás de um proxy com autenticação (Bearer token).',
-    timeoutField: 'ollama_timeout_seconds',
-  },
-  { id: 'custom', label: 'Custom (compatível com OpenAI)', apiKeyField: 'custom_llm_api_key', needsBaseUrl: true, baseUrlField: 'custom_llm_base_url' },
-];
 
 function ApiKeysSection() {
   const { t } = useTranslation();
