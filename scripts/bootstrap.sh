@@ -77,6 +77,16 @@ if [[ ! -d "${ANDROID_HOME_DIR}" ]]; then
 EOF
 else
   _ok "SDK at ${ANDROID_HOME_DIR}"
+  # Exportado pro resto do script (Appium doctor logo abaixo, e qualquer
+  # `npm`/`appium` chamado depois) — sem isso, ANDROID_HOME/JAVA_HOME só
+  # existem dentro do processo Python do Argus (efeito colateral de
+  # src/android_env.py), nunca no shell que roda este script.
+  export ANDROID_HOME="${ANDROID_HOME_DIR}"
+  export ANDROID_SDK_ROOT="${ANDROID_HOME_DIR}"
+  if [[ -z "${JAVA_HOME:-}" ]]; then
+    ANDROID_STUDIO_JBR="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+    [[ -d "${ANDROID_STUDIO_JBR}" ]] && export JAVA_HOME="${ANDROID_STUDIO_JBR}"
+  fi
   AVD_NAME="${ARGUS_ANDROID_AVD:-Pixel_9a}"
   EMULATOR_BIN="${ANDROID_HOME_DIR}/emulator/emulator"
   if [[ -x "${EMULATOR_BIN}" ]] && "${EMULATOR_BIN}" -list-avds 2>/dev/null | grep -qx "${AVD_NAME}"; then
