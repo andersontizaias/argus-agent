@@ -11,7 +11,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.139+-009688?logo=fastapi)
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-1C3C3C)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)
-![Repo privado](https://img.shields.io/badge/repo-private-lightgrey)
+![Licença: MIT](https://img.shields.io/badge/License-MIT-green)
 
 **Idioma:** 🇧🇷 Português (você está aqui) · [🇺🇸 English](README.md)
 
@@ -35,6 +35,7 @@
 - [⚙️ Configuração](#-configuração)
 - [📊 Relatórios](#-relatórios)
 - [🧪 Testes](#-testes)
+- [📄 Licença](#-licença)
 
 ---
 
@@ -42,7 +43,7 @@
 
 Instalado nativamente num Mac (sem Docker no caminho crítico — o simulador de iOS não roda em container), o Argus Agent fala três protocolos de integração: **API REST**, **MCP** e **A2A**. Aponte para uma aplicação-alvo (URL web ou binário mobile), dê a ele um script BDD e uma massa de testes, e ele dirige a aplicação de verdade — browser via Playwright, emulador Android ou simulador iOS via Appium — produzindo um relatório por cenário com screenshots e logs.
 
-O desenvolvimento passou pelas fases F0–F7 (fundação, agente web, REST + UI, Android, iOS, MCP, A2A e o polish final — LaunchAgents, retenção/prune, custo/tokens por run, tap Homebrew privado). Veja o plano completo (arquitetura, decisões técnicas, verificação fase a fase) em [`PLANO.md`](./PLANO.md).
+O desenvolvimento passou pelas fases F0–F7 (fundação, agente web, REST + UI, Android, iOS, MCP, A2A e o polish final — LaunchAgents, retenção/prune, custo/tokens de LLM por run, tap Homebrew). Veja o plano completo (arquitetura, decisões técnicas, verificação fase a fase) em [`PLANO.md`](./PLANO.md).
 
 ## 🛠️ Stack
 
@@ -53,12 +54,9 @@ O desenvolvimento passou pelas fases F0–F7 (fundação, agente web, REST + UI,
 
 ## 📦 Instalação
 
-Repositório **privado** — os caminhos abaixo (exceto o checkout de dev) exigem um GitHub token com acesso de leitura ao repo: um PAT **clássico** com escopo **`repo`** (não `read:packages` — isso é pro GitHub Packages, um recurso diferente — nem fine-grained, não testado aqui).
-
 ### 🍺 Homebrew (recomendado)
 
 ```bash
-export HOMEBREW_GITHUB_API_TOKEN=ghp_xxx   # token de leitura do repo privado
 brew tap andersontizaias/argus
 brew install andersontizaias/argus/argus-agent
 ```
@@ -74,8 +72,7 @@ Pra atualizar a fórmula numa release nova, edite `url`/`version`/`sha256` no [t
 Alternativa ao Homebrew — baixa a release mais recente e prepara tudo em `~/argus`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/andersontizaias/argus-agent/main/scripts/install.sh -o install.sh
-GITHUB_TOKEN=ghp_xxx bash install.sh
+curl -fsSL https://raw.githubusercontent.com/andersontizaias/argus-agent/main/scripts/install.sh | bash
 ```
 
 Rodar de novo atualiza para a versão mais recente sem tocar em `~/.argus/` (banco, artefatos, `.env`).
@@ -93,9 +90,9 @@ cd argus-agent
 
 ### 🧙 Instalador com wizard (.pkg/.dmg, experimental)
 
-Uma versão visual, de duplo clique, da instalação por tarball acima — pede
-o token do GitHub por uma caixa de diálogo nativa e roda o mesmo
-`install.sh`/`bootstrap.sh` numa janela do Terminal visível. Ainda não
+Uma versão visual, de duplo clique, da instalação por tarball acima — abre
+uma janela do Terminal e roda o mesmo `install.sh`/`bootstrap.sh`,
+visivelmente. Ainda não
 assinado/notarizado, então o Gatekeeper pode avisar no primeiro uso. Por
 enquanto, compile você mesmo: veja
 [`packaging/macos/README.md`](./packaging/macos/README.md).
@@ -166,3 +163,7 @@ cd frontend && npm run test:coverage
 ```
 
 CI (`ci.yml`) roda ruff, mypy, pytest (cobertura ≥90%), complexidade (`xenon`), duplicação (`jscpd`), segurança (`pip-audit`, `npm audit`, gitleaks) e o build+testes do frontend. Releases (`release.yml`) disparam em tag `v*`, publicando o tarball + `install.sh` na GitHub Release.
+
+## 📄 Licença
+
+[MIT](./LICENSE)

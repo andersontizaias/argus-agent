@@ -9,6 +9,7 @@ packages = ["src"]
 name = "argus-agent"
 version = "0.1.2"
 description = "Argus Agent — autonomous QA agent (web, Android, iOS) powered by LangGraph"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.139.2",

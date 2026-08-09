@@ -5,9 +5,7 @@ A visual, double-click alternative to running `scripts/install.sh` +
 `.pkg` carries no payload of its own, and its `postinstall` script is the
 whole installer. Clicking through the wizard:
 
-1. Asks for a GitHub token via a native macOS dialog (the repo is private,
-   and the Installer.app GUI doesn't give a terminal to `read` from).
-2. Opens a Terminal window and runs the exact same `scripts/install.sh` and
+1. Opens a Terminal window and runs the exact same `scripts/install.sh` and
    `scripts/bootstrap.sh` a manual install would use — one install path to
    maintain, the `.pkg` only changes how it's *triggered*.
 
@@ -25,11 +23,11 @@ whole installer. Clicking through the wizard:
   as root, and GUI dialogs need the user's Aqua session either way) —
   belt and suspenders, since which of the two actually happens can depend
   on the macOS version.
-- **No new install logic.** `run-wizard.sh` only prompts for the token and
-  launches a Terminal window; the actual work is 100% delegated to
-  `scripts/install.sh`/`bootstrap.sh`, downloaded fresh from `main` each
-  time — so this wizard doesn't need rebuilding on every app release, only
-  when the wizard's own UX changes.
+- **No new install logic.** `run-wizard.sh` only launches a Terminal
+  window; the actual work is 100% delegated to `scripts/install.sh`/
+  `bootstrap.sh`, downloaded fresh from `main` each time — so this wizard
+  doesn't need rebuilding on every app release, only when the wizard's own
+  UX changes.
 
 ## What it can't do
 
@@ -70,10 +68,9 @@ to the app's release version — bump it only when editing something under
 `installer -pkg build/ArgusAgentInstaller.pkg -target
 CurrentUserHomeDirectory` (no `sudo`) exercises the same no-admin path a
 double-click would, and is useful for checking the package structure — but
-it pops a **real** system dialog on whoever's screen is running it, since
-`run-wizard.sh` genuinely waits for input. Prefer testing via an actual
-double-click on the `.dmg`/`.pkg` in Finder so you can click through (and
-cancel) it interactively.
+it opens a **real** Terminal window on whoever's screen is running it and
+starts a real download/install. Prefer testing via an actual double-click
+on the `.dmg`/`.pkg` in Finder so you're the one watching it run.
 
 First run also triggers a macOS Automation permission prompt ("Installer"
 or the shell wants to control "Terminal") — expected, part of how

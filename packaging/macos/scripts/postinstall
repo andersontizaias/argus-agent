@@ -2,12 +2,10 @@
 # Argus Agent — postinstall do instalador .pkg (wizard visual).
 #
 # O pacote é "--nopayload": não instala nenhum arquivo por si só. Esse
-# script É a instalação — pede o token do GitHub por uma caixa de diálogo
-# nativa (o Installer.app não dá um terminal pra gente usar `read`) e abre
-# uma janela do Terminal rodando exatamente scripts/install.sh + bootstrap.sh
-# (os mesmos que uma instalação manual usa) — um único caminho de instalação
-# pra manter, o .pkg só troca "copiar/colar comandos no terminal" por
-# "clicar em Instalar".
+# script É a instalação — abre uma janela do Terminal rodando exatamente
+# scripts/install.sh + bootstrap.sh (os mesmos que uma instalação manual
+# usa) — um único caminho de instalação pra manter, o .pkg só troca
+# "copiar/colar comandos no terminal" por "clicar em Instalar".
 #
 # O `installer` do macOS SEMPRE roda scripts como root quando chamado via
 # `sudo installer` (linha de comando); via Installer.app (duplo clique) um

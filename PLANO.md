@@ -12,8 +12,8 @@ Criar do zero, em `/Users/little/Documents/Projects/Agents/argus-agent` (diretó
 - **Mobile**: Appium (UiAutomator2 no Android, XCUITest no iOS)
 - **Instalação**: nativa no host macOS (sem Docker no caminho crítico — simulador iOS não roda em container)
 - **Integração**: REST + MCP + A2A, as três
-- **Repositório**: GitHub **privado** (`andersontizaias/argus-agent`), criado na fundação via `gh repo create`
-- **Distribuição**: GitHub Releases com **tarball + install.sh** (token de leitura para baixar, já que o repo é privado); **tap Homebrew** entra na fase de polish
+- **Repositório**: GitHub, criado na fundação via `gh repo create` privado (`andersontizaias/argus-agent`); tornado **público** (licença MIT) na fase de polish, pra eliminar a exigência de token nas instalações (Homebrew/tarball/wizard) e permitir reconhecimento/reuso do código
+- **Distribuição**: GitHub Releases com **tarball + install.sh**; **tap Homebrew** entra na fase de polish
 - **Design system**: paleta extraída do logo `argus-agent-logo.png` (fornecido pelo usuário) vira tokens do Tailwind — cores primárias/acento da UI derivadas do logo, que também entra como favicon/navbar
 
 ## Decisões técnicas (tomadas no planejamento, com justificativa)
@@ -152,7 +152,7 @@ Identidade visual (extraída de `argus-agent-logo.png`, já no repo — mover pa
 - Roda a CI completa, builda o frontend e empacota `argus-agent-vX.Y.Z.tar.gz` (src, frontend/dist, migrations, scripts, pyproject.toml, uv.lock — sem node_modules/testes)
 - Cria GitHub Release com o tarball + `install.sh` anexados e changelog gerado das mensagens de commit
 - `scripts/install.sh` (client): pede/recebe `GITHUB_TOKEN` read-only (repo privado), baixa a release mais recente via API, extrai para `~/argus` e roda `bootstrap.sh`; re-executar o script atualiza para a última versão (preserva `~/.argus/` — banco, artefatos e `.env`)
-- Fase F7: tap Homebrew privado (`andersontizaias/homebrew-argus`) com fórmula apontando pro tarball da release (`brew install` com `HOMEBREW_GITHUB_API_TOKEN`); tarball+install.sh continuam como caminho principal
+- Fase F7: tap Homebrew (`andersontizaias/homebrew-argus`) com fórmula apontando pro tarball da release; tarball+install.sh continuam como caminho alternativo. Repositórios tornados públicos (MIT) ainda na F7, eliminando a exigência de token
 
 ## Bootstrap nativo (`scripts/bootstrap.sh`, idempotente)
 
@@ -185,7 +185,7 @@ Identidade visual (extraída de `argus-agent-logo.png`, já no repo — mover pa
 | **F4 iOS** | device_ios (simctl), XCUITest, validação build de simulador | Mesmo fluxo com `.zip` de `.app`; erro claro p/ ipa de device |
 | **F5 MCP** | mcp_server em `/mcp` | Adicionar no Claude Code e disparar `run_test` + `get_report` |
 | **F6 A2A** | a2a_server + AgentCard | AgentCard resolvável; roundtrip de task via client a2a-sdk |
-| **F7 Polish** | launchd, prune, README pt-BR, custo/tokens no relatório, tap Homebrew privado | Sobrevive a reboot; `argus-doctor` verde; CI completa; `brew install andersontizaias/argus/argus` funciona com token |
+| **F7 Polish** | launchd, prune, README bilíngue, custo/tokens no relatório, tap Homebrew, repositório público (MIT), instalador .pkg/.dmg | Sobrevive a reboot; `argus-doctor` verde; CI completa; `brew install andersontizaias/argus/argus-agent` funciona sem token |
 
 ## Riscos e mitigação
 

@@ -2,9 +2,8 @@ Welcome to the Argus Agent installer.
 
 This installer doesn't copy any files by itself — it's a guided wrapper around the same install steps documented in the project's README. Clicking Install will:
 
-  1. Ask for a GitHub token (the repository is private) via a system dialog.
-  2. Open a Terminal window and download the latest release into ~/argus.
-  3. Set up Python dependencies, Playwright, the database, and check for Homebrew, Node, Android Studio/Xcode and Appium — installing what it safely can, and telling you exactly what to do by hand for the rest (native SDKs and runtimes are never downloaded without your say-so).
+  1. Open a Terminal window and download the latest release into ~/argus.
+  2. Set up Python dependencies, Playwright, the database, and check for Homebrew, Node, Android Studio/Xcode and Appium — installing what it safely can, and telling you exactly what to do by hand for the rest (native SDKs and runtimes are never downloaded without your say-so).
 
 This step downloads a few hundred MB and can take several minutes. You'll see everything happen live in the Terminal window that opens.
 

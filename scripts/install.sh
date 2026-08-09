@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
 # Argus Agent — instalador do client (macOS).
 #
-# Baixa a release mais recente do GitHub (repo privado — exige um token com
-# permissão de leitura), extrai em ~/argus e prepara o backend (uv sync,
-# Playwright, migração do banco). Rodar de novo atualiza para a versão mais
-# recente sem tocar em ~/.argus/ (banco, artefatos, .env) — só o código em
-# ~/argus é substituído.
-#
-# Uso:
-#   GITHUB_TOKEN=ghp_xxx ./install.sh
-# ou deixe o script pedir o token interativamente.
+# Baixa a release mais recente do GitHub, extrai em ~/argus e prepara o
+# backend (uv sync, Playwright, migração do banco). Rodar de novo atualiza
+# para a versão mais recente sem tocar em ~/.argus/ (banco, artefatos,
+# .env) — só o código em ~/argus é substituído.
 set -euo pipefail
 
 REPO="andersontizaias/argus-agent"
@@ -27,23 +22,16 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ -z "${GITHUB_TOKEN:-}" ]; then
-  read -rsp "GitHub token (private repo, classic 'repo' scope — not 'read:packages', which is only for GitHub Packages, nor fine-grained): " GITHUB_TOKEN
-  echo
-fi
-export GITHUB_TOKEN
-
 TMP_TARBALL=""
 RELEASE_JSON_FILE="$(mktemp -t argus-release-XXXXXX).json"
 trap 'rm -f "${RELEASE_JSON_FILE}" "${TMP_TARBALL}"' EXIT
 
 echo "Looking up the latest release..."
 curl -sf \
-  -H "Authorization: token ${GITHUB_TOKEN}" \
   -H "Accept: application/vnd.github+json" \
   -o "${RELEASE_JSON_FILE}" \
   "https://api.github.com/repos/${REPO}/releases/latest" \
-  || { echo "Error: couldn't query the release (invalid token or no access to the repo?)." >&2; exit 1; }
+  || { echo "Error: couldn't query the release." >&2; exit 1; }
 
 # Lê de um arquivo (não interpola o JSON no código Python via shell) — evita
 # quebrar com aspas/caracteres especiais que o GitHub decidir incluir.
@@ -56,7 +44,7 @@ asset_url = ''
 for asset in data.get('assets', []):
     name = asset.get('name', '')
     if name.startswith('argus-agent-') and name.endswith('.tar.gz'):
-        asset_url = asset.get('url', '')
+        asset_url = asset.get('browser_download_url', '')
         break
 print(tag, asset_url)
 ")
@@ -69,11 +57,7 @@ echo "Version found: ${VERSION}"
 
 TMP_TARBALL="$(mktemp -t argus-agent-XXXXXX).tar.gz"
 echo "Downloading..."
-curl -sfL \
-  -H "Authorization: token ${GITHUB_TOKEN}" \
-  -H "Accept: application/octet-stream" \
-  -o "${TMP_TARBALL}" \
-  "${ASSET_URL}"
+curl -sfL -o "${TMP_TARBALL}" "${ASSET_URL}"
 
 mkdir -p "${INSTALL_DIR}"
 echo "Extracting to ${INSTALL_DIR}..."
