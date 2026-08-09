@@ -275,6 +275,66 @@ def test_get_evidence_missing_file_on_disk_returns_404():
     assert resp.status_code == 404
 
 
+def test_report_asset_serves_relative_path_used_by_report_html(tmp_path):
+    # report.html embute <img src="screenshots/x.png"> (caminho relativo à
+    # própria URL do relatório) — sem esta rota, abrir o relatório pela API
+    # (em vez do arquivo no disco) quebra essas imagens (achado ao vivo).
+    _configure_default_provider()
+    (tmp_path / "screenshots").mkdir()
+    (tmp_path / "screenshots" / "0_0_ok.png").write_bytes(b"fake-png-bytes")
+    with _client() as client:
+        created = client.post("/api/runs", json={"platform": "web", "bdd_script": VALID_BDD}).json()
+        store.set_run_artifacts_dir(created["id"], str(tmp_path))
+        resp = client.get(f"/api/runs/{created['id']}/screenshots/0_0_ok.png")
+    assert resp.status_code == 200
+    assert resp.content == b"fake-png-bytes"
+
+
+def test_report_asset_rejects_path_traversal(tmp_path):
+    # "%2e%2e" (não "..") de propósito — um ".." literal na URL é
+    # normalizado pelo próprio cliente HTTP (curl, browsers, httpx) antes
+    # até de sair, então nunca chegaria no handler pra testar a checagem de
+    # verdade; codificado, sobrevive ao parsing e só vira ".." depois do
+    # decode da própria rota — foi assim que essa checagem foi validada ao
+    # vivo (achado ao vivo).
+    _configure_default_provider()
+    secret = tmp_path.parent / "argus-report-asset-traversal-secret.txt"
+    secret.write_text("segredo")
+    try:
+        with _client() as client:
+            created = client.post("/api/runs", json={"platform": "web", "bdd_script": VALID_BDD}).json()
+            store.set_run_artifacts_dir(created["id"], str(tmp_path))
+            resp = client.get(
+                f"/api/runs/{created['id']}/%2e%2e/{secret.name}"
+            )
+        assert resp.status_code == 404
+        assert resp.json() == {"error": "File not found."}
+    finally:
+        secret.unlink(missing_ok=True)
+
+
+def test_report_asset_missing_file_returns_404(tmp_path):
+    _configure_default_provider()
+    with _client() as client:
+        created = client.post("/api/runs", json={"platform": "web", "bdd_script": VALID_BDD}).json()
+        store.set_run_artifacts_dir(created["id"], str(tmp_path))
+        resp = client.get(f"/api/runs/{created['id']}/screenshots/does-not-exist.png")
+    assert resp.status_code == 404
+
+
+def test_report_asset_does_not_shadow_specific_routes(tmp_path):
+    # Regressão: a rota catch-all precisa vir DEPOIS de cancel/stream/report/
+    # report.html/artifacts.zip no arquivo — senão ela rouba essas URLs.
+    _configure_default_provider()
+    (tmp_path / "report.json").write_text('{"run": {}, "scenarios": []}')
+    with _client() as client:
+        created = client.post("/api/runs", json={"platform": "web", "bdd_script": VALID_BDD}).json()
+        store.set_run_artifacts_dir(created["id"], str(tmp_path))
+        resp = client.get(f"/api/runs/{created['id']}/report")
+    assert resp.status_code == 200
+    assert resp.json() == {"run": {}, "scenarios": []}
+
+
 def test_stream_run_emits_initial_snapshot_and_closes_when_terminal():
     _configure_default_provider()
     with _client() as client:

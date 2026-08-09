@@ -202,3 +202,24 @@ async def get_evidence(evidence_id: str):
     if not path.exists():
         return JSONResponse(status_code=404, content={"error": "Evidence file not found on disk."})
     return FileResponse(path)
+
+
+@router.get("/api/runs/{run_id}/{file_path:path}")
+async def get_report_asset(run_id: str, file_path: str):
+    """Serve arquivos do diretório de artefatos da run pelo caminho relativo
+    usado dentro do próprio `report.html` (`<img src="screenshots/x.png">`).
+    Sem isso, abrir o relatório por `GET .../report.html` (em vez do arquivo
+    direto no disco) resolve esse `src` relativo contra a URL da API — que
+    não tem rota nenhuma pra `.../screenshots/x.png` —, quebrando as imagens
+    de evidência (achado ao vivo). Precisa ser a ÚLTIMA rota `/api/runs/
+    {run_id}/...` declarada neste arquivo: FastAPI/Starlette casam por
+    ordem de registro, então rotas mais específicas (cancel, stream, report,
+    report.html, artifacts.zip) sempre vencem antes deste catch-all."""
+    run = store.get_run(run_id)
+    if not run or not run.artifacts_dir:
+        return JSONResponse(status_code=404, content={"error": "Run not found."})
+    artifacts_dir = Path(run.artifacts_dir).resolve()
+    target = (artifacts_dir / file_path).resolve()
+    if not target.is_relative_to(artifacts_dir) or not target.is_file():
+        return JSONResponse(status_code=404, content={"error": "File not found."})
+    return FileResponse(target)
