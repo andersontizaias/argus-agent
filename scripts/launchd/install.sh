@@ -31,6 +31,28 @@ if [[ -z "${UV_PATH}" ]]; then
 fi
 UV_BIN_DIR="$(dirname "${UV_PATH}")"
 
+# launchd NÃO herda o PATH do shell interativo (sem .zshrc/.bashrc, sem
+# nvm/volta) — só o que a gente põe explicitamente aqui. Sem isso, appium
+# (normalmente instalado via `npm install -g`, num diretório gerenciado por
+# nvm/Homebrew/etc.) fica invisível pro processo do launchd mesmo estando
+# instalado — argus-doctor mostra "not found in PATH" mesmo com tudo certo
+# (achado ao vivo). Resolve onde appium/node estão AGORA, no shell de quem
+# instala, e grava o caminho absoluto no plist — falha graciosamente (Appium
+# continua indisponível pra runs mobile) se nenhum dos dois estiver visível
+# na hora do install, mas não impede web.
+PATH_VALUE="${UV_BIN_DIR}"
+for bin in appium node; do
+  bin_path="$(command -v "${bin}" || true)"
+  if [[ -n "${bin_path}" ]]; then
+    bin_dir="$(dirname "${bin_path}")"
+    case ":${PATH_VALUE}:" in
+      *":${bin_dir}:"*) ;; # já incluído (ex.: appium e node no mesmo dir)
+      *) PATH_VALUE="${PATH_VALUE}:${bin_dir}" ;;
+    esac
+  fi
+done
+PATH_VALUE="${PATH_VALUE}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
 if [[ ! -f "${INSTALL_DIR}/pyproject.toml" ]]; then
   echo "Error: ${INSTALL_DIR} doesn't look like an Argus Agent installation (no pyproject.toml)." >&2
   exit 1
@@ -39,6 +61,11 @@ fi
 echo "== Argus Agent — installing LaunchAgents =="
 echo "Install dir: ${INSTALL_DIR}"
 echo "Logs:        ${LOG_DIR}"
+echo "PATH:        ${PATH_VALUE}"
+if ! command -v appium >/dev/null 2>&1; then
+  echo "⚠ 'appium' not found in PATH right now — Android/iOS runs won't work" >&2
+  echo "  until it's installed and the LaunchAgents are reinstalled (rerun this script)." >&2
+fi
 echo
 
 mkdir -p "${LOG_DIR}" "${AGENTS_DIR}"
@@ -50,6 +77,7 @@ _render() {
   sed \
     -e "s|__UV_PATH__|${UV_PATH}|g" \
     -e "s|__UV_BIN_DIR__|${UV_BIN_DIR}|g" \
+    -e "s|__PATH_VALUE__|${PATH_VALUE}|g" \
     -e "s|__INSTALL_DIR__|${INSTALL_DIR}|g" \
     -e "s|__HOME__|${HOME}|g" \
     -e "s|__LOG_DIR__|${LOG_DIR}|g" \

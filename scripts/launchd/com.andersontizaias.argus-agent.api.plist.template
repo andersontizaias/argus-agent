@@ -15,7 +15,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>__UV_BIN_DIR__:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>__PATH_VALUE__</string>
         <key>HOME</key>
         <string>__HOME__</string>
     </dict>
