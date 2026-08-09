@@ -52,7 +52,7 @@ Development went through phases F0–F7 (foundation, web agent, REST + UI, Andro
 
 ## 📦 Installation
 
-Private repository — every path below except the dev checkout needs a GitHub token with read access to the repo.
+Private repository — every path below except the dev checkout needs a GitHub token with read access to the repo: a **classic** PAT with the **`repo`** scope (not `read:packages` — that's for GitHub Packages, a different resource — and not fine-grained, untested here).
 
 ### 🍺 Homebrew (recommended)
 

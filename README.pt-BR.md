@@ -52,7 +52,7 @@ O desenvolvimento passou pelas fases F0–F7 (fundação, agente web, REST + UI,
 
 ## 📦 Instalação
 
-Repositório **privado** — os caminhos abaixo (exceto o checkout de dev) exigem um GitHub token com acesso de leitura ao repo.
+Repositório **privado** — os caminhos abaixo (exceto o checkout de dev) exigem um GitHub token com acesso de leitura ao repo: um PAT **clássico** com escopo **`repo`** (não `read:packages` — isso é pro GitHub Packages, um recurso diferente — nem fine-grained, não testado aqui).
 
 ### 🍺 Homebrew (recomendado)
 

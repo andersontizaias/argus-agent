@@ -28,7 +28,7 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 if [ -z "${GITHUB_TOKEN:-}" ]; then
-  read -rsp "GitHub token (repo privado, escopo 'repo' ou 'read:packages' clássico — não fine-grained): " GITHUB_TOKEN
+  read -rsp "GitHub token (repo privado, escopo 'repo' clássico — não 'read:packages', que é só pro GitHub Packages, nem fine-grained): " GITHUB_TOKEN
   echo
 fi
 export GITHUB_TOKEN
