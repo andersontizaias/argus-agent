@@ -114,7 +114,10 @@ if ! command -v appium >/dev/null 2>&1; then
 else
   _ok "already installed ($(appium --version))"
 fi
-INSTALLED_DRIVERS="$(appium driver list --installed 2>/dev/null || true)"
+# appium escreve a lista em stderr, não stdout (confirmado ao vivo) — 2>&1
+# é necessário, só stdout deixava INSTALLED_DRIVERS sempre vazio e o script
+# tentava reinstalar um driver já presente, o que o appium recusa.
+INSTALLED_DRIVERS="$(appium driver list --installed 2>&1 || true)"
 for driver in uiautomator2 xcuitest; do
   if grep -q "${driver}" <<<"${INSTALLED_DRIVERS}"; then
     _ok "driver ${driver} already installed"
