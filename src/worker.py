@@ -28,7 +28,14 @@ POLL_INTERVAL_SECONDS = 2.0
 PRUNE_INTERVAL_SECONDS = 3600.0
 
 _shutdown_requested = False
-_last_prune_at: float = 0.0
+# None = "nunca rodou ainda" — dispara o prune imediatamente no primeiro
+# giro do loop. Um sentinel numérico (ex.: 0.0) pareceria "no passado", mas
+# `time.monotonic()` NÃO é época Unix — é relativo a um ponto arbitrário
+# (em geral o boot da máquina), então logo após reiniciar um container/host
+# `time.monotonic()` pode ele mesmo valer poucos segundos, menor que
+# PRUNE_INTERVAL_SECONDS, e o primeiro prune real só aconteceria depois de
+# o relógio monotônico ACUMULAR uma hora — não uma hora após o worker subir.
+_last_prune_at: float | None = None
 
 
 def _request_shutdown(_signum: int, _frame: FrameType | None) -> None:
@@ -64,7 +71,7 @@ async def _maybe_prune() -> None:
     todo giro do loop sem custo real."""
     global _last_prune_at
     now = time.monotonic()
-    if now - _last_prune_at < PRUNE_INTERVAL_SECONDS:
+    if _last_prune_at is not None and now - _last_prune_at < PRUNE_INTERVAL_SECONDS:
         return
     _last_prune_at = now
     try:

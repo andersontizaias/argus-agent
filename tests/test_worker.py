@@ -10,10 +10,10 @@ pytestmark = pytest.mark.anyio
 @pytest.fixture(autouse=True)
 def _reset_shutdown_flag():
     worker._shutdown_requested = False
-    worker._last_prune_at = 0.0
+    worker._last_prune_at = None
     yield
     worker._shutdown_requested = False
-    worker._last_prune_at = 0.0
+    worker._last_prune_at = None
 
 
 async def test_process_next_queued_run_returns_false_when_empty(monkeypatch):
@@ -80,10 +80,10 @@ def test_request_shutdown_sets_flag():
     assert worker._shutdown_requested is True
 
 
-async def test_maybe_prune_runs_once_interval_elapsed(monkeypatch):
+async def test_maybe_prune_runs_on_first_ever_call(monkeypatch):
     calls = []
     monkeypatch.setattr(worker.prune, "prune_old_runs", lambda: calls.append(1) or 0)
-    worker._last_prune_at = 0.0  # bem no passado — "elapsed" na primeira checagem
+    worker._last_prune_at = None  # nunca rodou ainda — dispara na primeira checagem
 
     await worker._maybe_prune()
 
@@ -105,6 +105,6 @@ async def test_maybe_prune_swallows_exceptions(monkeypatch):
         raise RuntimeError("disco cheio")
 
     monkeypatch.setattr(worker.prune, "prune_old_runs", _broken)
-    worker._last_prune_at = 0.0
+    worker._last_prune_at = None
 
     await worker._maybe_prune()  # não deve levantar — worker não pode morrer por causa do prune
