@@ -59,8 +59,10 @@ Repositório **privado** — os caminhos abaixo (exceto o checkout de dev) exige
 ```bash
 export HOMEBREW_GITHUB_API_TOKEN=ghp_xxx   # token de leitura do repo privado
 brew tap andersontizaias/argus
-brew install argus
+brew install andersontizaias/argus/argus-agent
 ```
+
+Use o **nome totalmente qualificado** (`andersontizaias/argus/argus-agent`), não só `brew install argus` — o homebrew-core já tem uma fórmula sem relação nenhuma chamada literalmente `argus` (uma ferramenta de auditoria de rede), e a checagem de confiança de tap do Homebrew cai silenciosamente pra ela em vez de dar erro se você usar o nome curto. A forma qualificada evita a colisão e já confia na fórmula automaticamente, sem precisar de `brew trust` à parte.
 
 A primeira chamada de `argus`/`argus-worker`/`argus-doctor` faz o setup de verdade (`uv sync` + Playwright Chromium, ~200 MB, alguns minutos) num venv em `~/.argus/venv` — as próximas são instantâneas. Depois, veja [Rodando](#-rodando) e, se quiser que suba sozinho no login, [LaunchAgents](#-launchagents-subir-sozinho-no-login).
 
