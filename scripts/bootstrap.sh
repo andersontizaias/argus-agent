@@ -20,6 +20,26 @@ _step() { echo; echo "== $* =="; }
 _ok() { echo "  ✓ $*"; }
 _warn() { echo "  ⚠ $*" >&2; }
 
+# macOS não tem `timeout` (GNU coreutils) por padrão — implementação
+# portátil mínima: mata o comando se não terminar dentro do prazo. Usada só
+# pro `appium driver doctor`, que já travou de verdade (>60s sem retornar,
+# confirmado ao vivo, depois de listar os SDKs de Simulator instalados) —
+# bug/lentidão do próprio pacote do Appium, não algo que dê pra corrigir
+# aqui, só conter.
+_with_timeout() {
+  local secs="$1"
+  shift
+  "$@" &
+  local cmd_pid=$!
+  (sleep "${secs}" && kill -9 "${cmd_pid}" 2>/dev/null) &
+  local watchdog_pid=$!
+  local status=0
+  wait "${cmd_pid}" 2>/dev/null || status=$?
+  kill "${watchdog_pid}" 2>/dev/null || true
+  wait "${watchdog_pid}" 2>/dev/null || true
+  return "${status}"
+}
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "Error: bootstrap.sh is macOS-only." >&2
   exit 1
@@ -135,8 +155,8 @@ for driver in uiautomator2 xcuitest; do
     appium driver install "${driver}"
   fi
 done
-appium driver doctor uiautomator2 || _warn "appium driver doctor uiautomator2 found issues (above)"
-appium driver doctor xcuitest || _warn "appium driver doctor xcuitest found issues (above)"
+_with_timeout 60 appium driver doctor uiautomator2 || _warn "appium driver doctor uiautomator2 found issues or timed out (above)"
+_with_timeout 60 appium driver doctor xcuitest || _warn "appium driver doctor xcuitest found issues or timed out (above)"
 
 # 5. Backend Python -----------------------------------------------------------------
 _step "Backend (uv sync + Playwright + .env + migrations)"
