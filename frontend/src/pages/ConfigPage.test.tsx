@@ -55,6 +55,31 @@ describe('ConfigPage', () => {
     expect(await screen.findByText(/database/)).toBeInTheDocument();
   });
 
+  it('still shows environment health badges when the environment is degraded (503)', async () => {
+    // GET /api/health responde 503 de propósito quando degradado — o card
+    // "Ambiente" precisa aparecer mesmo assim, é justamente quando importa
+    // mostrar qual checagem falhou (achado ao vivo: sumia da tela).
+    const degradedHealth = {
+      status: 'degraded',
+      checks: [
+        { name: 'database', ok: true, detail: 'SQLite ok' },
+        { name: 'appium', ok: false, detail: 'not found in PATH' },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((path: string) => {
+        if (path === '/api/config') return Promise.resolve(jsonResponse(BASE_CONFIG));
+        if (path === '/api/health') return Promise.resolve(jsonResponse(degradedHealth, 503));
+        return Promise.resolve(jsonResponse({}));
+      })
+    );
+    renderWithProviders(<ConfigPage />);
+
+    expect(await screen.findByText(/database/)).toBeInTheDocument();
+    expect(await screen.findByText(/appium/)).toBeInTheDocument();
+  });
+
   it('saves the config and shows a success toast', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn((path: string, opts?: RequestInit) => {

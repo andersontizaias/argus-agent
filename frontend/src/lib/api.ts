@@ -31,6 +31,18 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+/** GET /api/health usa o status HTTP (200 ok / 503 degraded) de propósito,
+ * pra quem monitora de fora conseguir detectar degradação pelo código —
+ * mas o corpo É a informação útil nos dois casos (o detalhe de cada
+ * checagem). `request()` trataria o 503 como erro e descartaria esse
+ * corpo, escondendo o card "Ambiente" da UI bem na hora que mais importa
+ * mostrar o que está degradado (achado ao vivo). Não passa pelo helper
+ * genérico por isso. */
+async function getHealth(): Promise<HealthResponse> {
+  const res = await fetch('/api/health', { headers: { 'Content-Type': 'application/json' }, credentials: 'include' });
+  return res.json();
+}
+
 export interface RunsFilter {
   status?: string;
   platform?: string;
@@ -39,7 +51,7 @@ export interface RunsFilter {
 }
 
 export const api = {
-  getHealth: () => request<HealthResponse>('/api/health'),
+  getHealth,
   getConfig: () => request<ProjectConfig>('/api/config'),
   saveConfig: (payload: Partial<ProjectConfig>) =>
     request<{ status: string; message: string }>('/api/config', {

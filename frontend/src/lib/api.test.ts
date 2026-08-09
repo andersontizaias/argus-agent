@@ -17,6 +17,17 @@ describe('api', () => {
     expect(fetch).toHaveBeenCalledWith('/api/health', expect.objectContaining({ credentials: 'include' }));
   });
 
+  it('getHealth returns the body even when the response is a 503 (degraded)', async () => {
+    // /api/health responde 503 de propósito quando degradado — diferente
+    // de todo outro endpoint, o corpo (o detalhe de cada checagem) é
+    // informação válida nesse caso, não um erro a ser descartado.
+    const checks = [{ name: 'appium', ok: false, detail: 'not found in PATH' }];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ status: 'degraded', checks }, 503)));
+    const result = await api.getHealth();
+    expect(result.status).toBe('degraded');
+    expect(result.checks).toEqual(checks);
+  });
+
   it('saveConfig posts the payload as JSON', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ status: 'ok', message: 'saved' })));
     await api.saveConfig({ anthropic_api_key: 'sk-ant-123' });
