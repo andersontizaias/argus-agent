@@ -88,3 +88,23 @@ jobs:
             --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── Instalador .pkg/.dmg (wizard visual) ──────────────────────────
+  # Job à parte, em macos-latest: pkgbuild/productbuild/hdiutil só existem
+  # no macOS. Não depende do tarball do job acima (o .pkg não carrega o
+  # código da app — o postinstall baixa a release mais recente sozinho,
+  # ver packaging/macos/README.md) — só precisa que a release já exista
+  # pra anexar o .dmg nela.
+  installer:
+    needs: release
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - run: packaging/macos/build-pkg.sh "${GITHUB_REF_NAME#v}"
+      - run: packaging/macos/build-dmg.sh
+      - name: Anexa o .dmg na release já criada
+        run: gh release upload "${GITHUB_REF_NAME}" packaging/macos/build/ArgusAgent-Installer.dmg
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
