@@ -104,6 +104,44 @@ describe('useRunStream', () => {
     vi.useRealTimers();
   });
 
+  it('backs off exponentially on repeated errors instead of retrying every 2s forever', async () => {
+    // Achado ao vivo: sem isso, uma aba deixada aberta durante uma queda
+    // prolongada do servidor martela reconexão pra sempre a cada 2s.
+    vi.useFakeTimers();
+    renderHook(() => useRunStream('run-1'), { wrapper });
+
+    act(() => FakeEventSource.instances[0].onerror?.()); // 1ª falha -> espera 2s
+    await act(async () => vi.advanceTimersByTime(1999));
+    expect(FakeEventSource.instances).toHaveLength(1); // ainda não reconectou
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(FakeEventSource.instances).toHaveLength(2);
+
+    act(() => FakeEventSource.instances[1].onerror?.()); // 2ª falha seguida -> espera 4s
+    await act(async () => vi.advanceTimersByTime(3999));
+    expect(FakeEventSource.instances).toHaveLength(2);
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(FakeEventSource.instances).toHaveLength(3);
+
+    vi.useRealTimers();
+  });
+
+  it('resets the backoff to the base delay after a successful reconnection', async () => {
+    vi.useFakeTimers();
+    renderHook(() => useRunStream('run-1'), { wrapper });
+
+    act(() => FakeEventSource.instances[0].onerror?.()); // 1ª falha -> 2s
+    await act(async () => vi.advanceTimersByTime(2000));
+    act(() => FakeEventSource.instances[1].onopen?.()); // conectou de novo -> reseta o contador
+
+    act(() => FakeEventSource.instances[1].onerror?.()); // falha logo em seguida -> volta pra 2s, não 4s
+    await act(async () => vi.advanceTimersByTime(1999));
+    expect(FakeEventSource.instances).toHaveLength(2);
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(FakeEventSource.instances).toHaveLength(3);
+
+    vi.useRealTimers();
+  });
+
   it('ignores malformed event payloads without crashing', () => {
     const { result } = renderHook(() => useRunStream('run-1'), { wrapper });
     const source = FakeEventSource.instances[0];

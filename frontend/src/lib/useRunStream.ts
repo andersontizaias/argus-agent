@@ -9,6 +9,15 @@ export interface RunStreamLogEntry {
   [key: string]: unknown;
 }
 
+// Backoff exponencial (2s, 4s, 8s, 16s, cap em 30s) em vez de tentar de nova
+// a cada 2s pra sempre — uma aba de Detalhe da Run deixada aberta durante
+// uma queda prolongada do servidor (deploy, reinício) não deve martelar
+// reconexão por horas (achado ao vivo: dezenas de reinícios do servidor
+// durante uma sessão de depuração, com a aba aberta, geraram milhares de
+// tentativas). Reseta pro valor base assim que uma conexão abre de verdade.
+const RECONNECT_BASE_MS = 2000;
+const RECONNECT_MAX_MS = 30000;
+
 const EVENT_TYPES = [
   'run_snapshot',
   'run_provisioning',
@@ -37,16 +46,24 @@ export function useRunStream(runId: string | undefined) {
     let cancelled = false;
     let source: EventSource | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
 
     function connect() {
       if (cancelled) return;
       source = new EventSource(`/api/runs/${currentRunId}/stream?after=${lastSeqRef.current}`);
 
-      source.onopen = () => setConnected(true);
+      source.onopen = () => {
+        attempt = 0;
+        setConnected(true);
+      };
       source.onerror = () => {
         setConnected(false);
         source?.close();
-        if (!cancelled) retryTimer = setTimeout(connect, 2000);
+        if (!cancelled) {
+          const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
+          attempt += 1;
+          retryTimer = setTimeout(connect, delay);
+        }
       };
 
       for (const type of EVENT_TYPES) {
