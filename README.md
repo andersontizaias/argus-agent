@@ -35,6 +35,7 @@
 - [⚙️ Configuration](#-configuration)
 - [📊 Reports](#-reports)
 - [🧪 Tests](#-tests)
+- [🌱 Contributing](#-contributing)
 - [📄 License](#-license)
 
 ---
@@ -161,6 +162,10 @@ cd frontend && npm run test:coverage
 ```
 
 CI (`ci.yml`) runs ruff, mypy, pytest (coverage ≥90%), complexity (`xenon`), duplication (`jscpd`), security (`pip-audit`, `npm audit`, gitleaks) and the frontend build+tests. Releases (`release.yml`) trigger on `v*` tags, publishing the tarball + `install.sh` to the GitHub Release.
+
+## 🌱 Contributing
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the branching model and how a change goes from a PR to a published release.
 
 ## 📄 License
 
