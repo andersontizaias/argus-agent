@@ -82,6 +82,7 @@
     "cancelling": "Cancelling...",
     "cancelled": "Cancellation requested.",
     "viewReport": "View report",
+    "exportPdf": "Export PDF",
     "downloadArtifacts": "Download artifacts (.zip)",
     "noScenariosYet": "No scenarios yet — the run is being processed.",
     "eventLog": "Event log"

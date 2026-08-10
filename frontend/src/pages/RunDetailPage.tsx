@@ -117,6 +117,9 @@ export function RunDetailPage() {
                 <a href={api.reportUrl(run.id)} target="_blank" rel="noreferrer">{t('runDetail.viewReport')}</a>
               </Button>
               <Button variant="outline" asChild>
+                <a href={api.reportPdfUrl(run.id)}>{t('runDetail.exportPdf')}</a>
+              </Button>
+              <Button variant="outline" asChild>
                 <a href={api.artifactsZipUrl(run.id)}>{t('runDetail.downloadArtifacts')}</a>
               </Button>
             </>

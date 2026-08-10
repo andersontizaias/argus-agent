@@ -76,6 +76,7 @@ export const api = {
     request<{ id: string; cancel_requested: boolean }>(`/api/runs/${runId}/cancel`, { method: 'POST' }),
   reportUrl: (runId: string) => `/api/runs/${runId}/report.html`,
   reportJsonUrl: (runId: string) => `/api/runs/${runId}/report`,
+  reportPdfUrl: (runId: string) => `/api/runs/${runId}/report.pdf`,
   artifactsZipUrl: (runId: string) => `/api/runs/${runId}/artifacts.zip`,
   evidenceUrl: (evidenceId: string) => `/api/evidences/${evidenceId}`,
 
