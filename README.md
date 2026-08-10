@@ -43,7 +43,7 @@
 
 Installed natively on a Mac (no Docker on the critical path — the iOS simulator doesn't run in a container), Argus Agent speaks three integration protocols: **REST API**, **MCP** and **A2A**. Point it at a target application (a web URL or a mobile binary), give it a BDD script and test data, and it drives the app for real — a browser via Playwright, an Android emulator or iOS simulator via Appium — producing a report per scenario with screenshots and logs.
 
-Development went through phases F0–F7 (foundation, web agent, REST + UI, Android, iOS, MCP, A2A, and final polish — LaunchAgents, retention/prune, LLM token/cost tracking, Homebrew tap). See the full plan (architecture, technical decisions, phase-by-phase verification) in [`PLANO.md`](./PLANO.md) *(pt-BR only)*.
+For architecture notes and design decisions, see [`PLANO.md`](./PLANO.md) *(development log, pt-BR only)*.
 
 ## 🛠️ Tech Stack
 
@@ -61,11 +61,7 @@ brew tap andersontizaias/argus
 brew install andersontizaias/argus/argus-agent
 ```
 
-Use the **fully-qualified name** (`andersontizaias/argus/argus-agent`), not just `brew install argus` — homebrew-core already has an unrelated formula literally named `argus` (a network audit tool), and Homebrew's tap-trust check silently falls back to it instead of erroring if you use the short name. The fully-qualified form both avoids the collision and auto-trusts the formula, no separate `brew trust` step needed.
-
 The first call to `argus`/`argus-worker`/`argus-doctor` does the real setup (`uv sync` + Playwright Chromium, ~200 MB, a few minutes) into a venv at `~/.argus/venv` — later calls are instant. Then see [Running](#-running) and, if you want it to start on login, [LaunchAgents](#-launchagents-start-on-login).
-
-To bump the formula for a new release, edit `url`/`version`/`sha256` in the [tap](https://github.com/andersontizaias/homebrew-argus).
 
 ### 📥 Tarball + install.sh
 
