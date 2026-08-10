@@ -24,7 +24,7 @@ _HTML_TEMPLATE = Template("""\
 <style>
   body { font-family: -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 2rem; }
   h1 { font-size: 1.4rem; }
-  .summary { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; }
+  .summary { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; margin-bottom: 1.5rem; }
   .summary div { background: #1e293b; padding: 0.75rem 1.25rem; border-radius: 8px; }
   .scenario { background: #1e293b; border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
   .scenario h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
@@ -181,3 +181,46 @@ def _is_within(path: str, base: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+async def render_report_pdf(run_id: str) -> Path:
+    """Renderiza o report.html já compilado pra PDF via Chromium headless
+    (Playwright — já é dependência do projeto pra automação web, então não
+    precisa de lib nova tipo weasyprint). Abre o arquivo direto do disco por
+    `file://` em vez de passar pela API: assim os `<img src="screenshots/
+    x.png">` relativos resolvem contra o próprio diretório do HTML igual a
+    quando alguém abre o relatório offline, sem depender do servidor do
+    Argus estar de pé nem duplicar a lógica de asset da rota catch-all.
+
+    Cacheia em report.pdf ao lado do report.html — só re-renderiza (custo de
+    subir um Chromium) se o HTML for mais novo que o PDF já gerado."""
+    run = store.get_run(run_id)
+    if not run or not run.artifacts_dir:
+        raise ValueError(f"Run {run_id} não encontrada.")
+
+    run_dir = Path(run.artifacts_dir)
+    html_path = run_dir / "report.html"
+    if not html_path.exists():
+        raise FileNotFoundError("report.html not found.")
+
+    pdf_path = run_dir / "report.pdf"
+    if pdf_path.exists() and pdf_path.stat().st_mtime >= html_path.stat().st_mtime:
+        return pdf_path
+
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(html_path.resolve().as_uri())
+            await page.pdf(
+                path=str(pdf_path),
+                format="A4",
+                print_background=True,
+                margin={"top": "16mm", "bottom": "16mm", "left": "12mm", "right": "12mm"},
+            )
+        finally:
+            await browser.close()
+
+    return pdf_path

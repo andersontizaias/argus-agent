@@ -216,6 +216,47 @@ def test_report_html_not_ready_returns_404():
     assert resp.status_code == 404
 
 
+def test_report_pdf_renders_file_once_available(tmp_path):
+    # Chromium headless de verdade (Playwright, já é dependência do
+    # projeto) renderizando um report.html real pra PDF — prova a rota
+    # fim-a-fim em vez de só mockar o render.
+    _configure_default_provider()
+    (tmp_path / "report.html").write_text("<html><body><h1>Relatório</h1></body></html>")
+    with _client() as client:
+        created = client.post("/api/runs", json={"platform": "web", "bdd_script": VALID_BDD}).json()
+        store.set_run_artifacts_dir(created["id"], str(tmp_path))
+        resp = client.get(f"/api/runs/{created['id']}/report.pdf")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/pdf"
+    assert resp.content.startswith(b"%PDF")
+    assert (tmp_path / "report.pdf").exists()
+
+
+def test_report_pdf_reuses_cached_file_when_html_unchanged(tmp_path):
+    _configure_default_provider()
+    (tmp_path / "report.html").write_text("<html><body>v1</body></html>")
+    with _client() as client:
+        created = client.post("/api/runs", json={"platform": "web", "bdd_script": VALID_BDD}).json()
+        store.set_run_artifacts_dir(created["id"], str(tmp_path))
+        client.get(f"/api/runs/{created['id']}/report.pdf")
+        first_bytes = (tmp_path / "report.pdf").read_bytes()
+        # Reescreve o PDF cacheado com um conteúdo sentinela — se a rota
+        # bater no cache (mtime do PDF >= mtime do HTML), devolve isso sem
+        # invocar o Chromium de novo.
+        (tmp_path / "report.pdf").write_bytes(b"%PDF-cached-sentinel")
+        resp = client.get(f"/api/runs/{created['id']}/report.pdf")
+    assert resp.content == b"%PDF-cached-sentinel"
+    assert first_bytes != resp.content
+
+
+def test_report_pdf_not_ready_returns_404():
+    _configure_default_provider()
+    with _client() as client:
+        created = client.post("/api/runs", json={"platform": "web", "bdd_script": VALID_BDD}).json()
+        resp = client.get(f"/api/runs/{created['id']}/report.pdf")
+    assert resp.status_code == 404
+
+
 def test_artifacts_zip_contains_files(tmp_path):
     _configure_default_provider()
     (tmp_path / "screenshots").mkdir()

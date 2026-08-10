@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from src import auth, models, run_service, store
+from src import auth, models, report, run_service, store
 from src.events import list_events
 
 router = APIRouter(dependencies=[Depends(auth.require_api_key)])
@@ -169,6 +169,19 @@ async def get_report_html(run_id: str):
     if not report_path.exists():
         return JSONResponse(status_code=404, content={"error": "report.html not found."})
     return FileResponse(report_path, media_type="text/html")
+
+
+@router.get("/api/runs/{run_id}/report.pdf")
+async def get_report_pdf(run_id: str):
+    try:
+        pdf_path = await report.render_report_pdf(run_id)
+    except (ValueError, FileNotFoundError) as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename=f"argus-report-{run_id}.pdf",
+    )
 
 
 @router.get("/api/runs/{run_id}/artifacts.zip")

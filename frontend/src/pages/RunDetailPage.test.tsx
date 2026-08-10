@@ -108,6 +108,7 @@ describe('RunDetailPage', () => {
     await screen.findByText('Login válido');
     expect(screen.queryByRole('button', { name: 'Cancelar' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Ver relatório' })).toHaveAttribute('href', '/api/runs/run-1/report.html');
+    expect(screen.getByRole('link', { name: 'Exportar PDF' })).toHaveAttribute('href', '/api/runs/run-1/report.pdf');
     expect(screen.getByRole('link', { name: 'Baixar artefatos (.zip)' })).toHaveAttribute('href', '/api/runs/run-1/artifacts.zip');
   });
 
