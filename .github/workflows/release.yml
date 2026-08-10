@@ -2,13 +2,49 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch: {}
 
 jobs:
+  # ─── Decide se este push pra main é uma versão nova ────────────────
+  # A versão em pyproject.toml é a fonte de verdade (não uma tag cortada
+  # à mão): todo merge pra main passa por aqui, mas só vira release de
+  # verdade se essa versão ainda não tiver uma tag — um merge sem bump
+  # (docs, chore de CI, etc.) não deve gerar release nem falhar.
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Lê [project].version do pyproject.toml
+        id: version
+        run: |
+          VERSION=$(python3 -c "
+          import re
+          text = open('pyproject.toml').read()
+          print(re.search(r'^version = \"([^\"]+)\"', text, re.M).group(1))
+          ")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+      - name: Já existe uma tag pra essa versão?
+        id: check
+        run: |
+          if git ls-remote --tags origin "refs/tags/v${{ steps.version.outputs.version }}" | grep -q .; then
+            echo "v${{ steps.version.outputs.version }} já foi lançada — merge sem bump de versão, nada a fazer."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   release:
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.check-version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -20,25 +56,6 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
-      # A tag é a fonte de verdade do "quer publicar isto", mas a versão
-      # publicada (no tarball, no /api/health, no rodapé da UI) vem sempre
-      # do pyproject.toml (ver src/settings.py:VERSION) — as duas têm que
-      # bater, senão a tag foi cortada esquecendo de bumpar a versão.
-      - name: Valida que a tag bate com [project].version do pyproject.toml
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PYPROJECT_VERSION=$(python3 -c "
-          import re
-          text = open('pyproject.toml').read()
-          print(re.search(r'^version = \"([^\"]+)\"', text, re.M).group(1))
-          ")
-          echo "tag=$TAG_VERSION pyproject=$PYPROJECT_VERSION"
-          if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
-            echo "::error::Tag v$TAG_VERSION não bate com pyproject.toml ($PYPROJECT_VERSION)."
-            exit 1
-          fi
-          echo "VERSION=$PYPROJECT_VERSION" >> "$GITHUB_ENV"
 
       - run: uv sync --frozen
       - name: Gerar ARGUS_SECRET_KEY efêmera só para os testes
@@ -79,9 +96,14 @@ jobs:
           find "package/$STAGE" -type f -name "*.pyc" -delete
           tar -czf "argus-agent-v${VERSION}.tar.gz" -C package "$STAGE"
 
+      - name: Cria e publica a tag
+        run: |
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+
       - name: Cria a GitHub Release
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release create "v${VERSION}" \
             "argus-agent-v${VERSION}.tar.gz" \
             "scripts/install.sh" \
             --title "Argus Agent v${VERSION}" \
@@ -96,15 +118,16 @@ jobs:
   # ver packaging/macos/README.md) — só precisa que a release já exista
   # pra anexar o .dmg nela.
   installer:
-    needs: release
+    needs: [check-version, release]
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: macos-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - run: packaging/macos/build-pkg.sh "${GITHUB_REF_NAME#v}"
+      - run: packaging/macos/build-pkg.sh "${{ needs.check-version.outputs.version }}"
       - run: packaging/macos/build-dmg.sh
       - name: Anexa o .dmg na release já criada
-        run: gh release upload "${GITHUB_REF_NAME}" packaging/macos/build/ArgusAgent-Installer.dmg
+        run: gh release upload "v${{ needs.check-version.outputs.version }}" packaging/macos/build/ArgusAgent-Installer.dmg
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
 
 concurrency:
@@ -148,3 +148,43 @@ jobs:
         with:
           name: sbom
           path: sbom.spdx.json
+
+  # ─── Abre o PR develop -> main depois que develop passa verde ──────
+  # Só roda em push direto a develop (ou seja, depois que um PR de feature
+  # já foi mergeado nela) e só depois que todos os outros jobs passaram
+  # (comportamento padrão do `needs`: se algum falhar, este é pulado). O
+  # PR criado aqui reaproveita os checks já reportados nesta mesma SHA —
+  # main também exige esses status checks, e eles já estão verdes antes
+  # mesmo do PR existir, então não trava esperando o GITHUB_TOKEN
+  # re-disparar CI (ele não dispara — eventos de PR abertos por
+  # GITHUB_TOKEN não cascateiam novos workflow runs, mas os checks da SHA
+  # já são reaproveitados pela branch protection do GitHub).
+  open-pr-to-main:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    needs:
+      [backend-tests, backend-lint, frontend-tests, complexity, duplication, sca-python, sca-frontend, gitleaks, sbom]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Abre PR develop -> main (se houver diferença e nenhum já aberto)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git fetch origin main
+          if git diff --quiet origin/main..HEAD; then
+            echo "develop já está sincronizada com main — nada a fazer."
+            exit 0
+          fi
+          existing=$(gh pr list --repo "${GITHUB_REPOSITORY}" --base main --head develop --state open --json number --jq '.[0].number // empty')
+          if [ -n "${existing}" ]; then
+            echo "Já existe PR aberto (#${existing}) develop -> main."
+            exit 0
+          fi
+          gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head develop \
+            --title "Release: develop -> main" \
+            --body "PR automático aberto pelo CI depois que \`develop\` passou verde. Revise e mergeie pra disparar o release em \`main\`."
