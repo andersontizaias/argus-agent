@@ -102,9 +102,78 @@ async def test_fetch_binary_wraps_network_errors(tmp_path, monkeypatch):
         await binary_fetch.fetch_binary("https://x/app.apk", None, tmp_path / "a.apk")
 
 
-def test_validate_apk_accepts_zip_magic(tmp_path):
+# ─── binary_url apontando pra um arquivo local (upload ou caminho digitado) ─
+
+
+async def test_fetch_binary_copies_local_absolute_path_instead_of_downloading(tmp_path, monkeypatch):
+    def fail_if_called(*_a, **_kw):
+        raise AssertionError("não devia tentar baixar via HTTP pra um caminho local")
+
+    monkeypatch.setattr(binary_fetch.requests, "get", fail_if_called)
+    src = tmp_path / "meu-app.apk"
+    src.write_bytes(b"conteudo-do-apk-local")
+    dest = tmp_path / "run-dir" / "app.apk"
+
+    result = await binary_fetch.fetch_binary(str(src), None, dest)
+
+    assert result == dest
+    assert dest.read_bytes() == b"conteudo-do-apk-local"
+
+
+async def test_fetch_binary_copies_local_file_uri(tmp_path, monkeypatch):
+    monkeypatch.setattr(binary_fetch.requests, "get", lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("http")))
+    src = tmp_path / "meu-app.ipa"
+    src.write_bytes(b"conteudo-do-ipa-local")
+    dest = tmp_path / "run-dir" / "app.zip"
+
+    result = await binary_fetch.fetch_binary(f"file://{src}", None, dest)
+
+    assert result == dest
+    assert dest.read_bytes() == b"conteudo-do-ipa-local"
+
+
+async def test_fetch_binary_raises_clearly_when_local_path_missing(tmp_path):
+    with pytest.raises(binary_fetch.BinaryFetchError, match="não encontrado"):
+        await binary_fetch.fetch_binary(str(tmp_path / "nao-existe.apk"), None, tmp_path / "dest.apk")
+
+
+def test_cleanup_staged_upload_removes_directory_inside_uploads_dir(tmp_path, monkeypatch):
+    staging_root = tmp_path / "uploads"
+    staging_root.mkdir()
+    monkeypatch.setattr(binary_fetch, "uploads_dir", lambda: staging_root)
+
+    upload_dir = staging_root / "abc123"
+    upload_dir.mkdir()
+    staged_file = upload_dir / "app.apk"
+    staged_file.write_bytes(b"x")
+
+    binary_fetch.cleanup_staged_upload(str(staged_file))
+
+    assert not upload_dir.exists()
+
+
+def test_cleanup_staged_upload_ignores_path_outside_uploads_dir(tmp_path, monkeypatch):
+    # Caminho local digitado à mão pelo usuário (não veio de um upload) —
+    # nunca deve ser apagado por engano.
+    monkeypatch.setattr(binary_fetch, "uploads_dir", lambda: tmp_path / "uploads")
+    outside = tmp_path / "Desktop" / "meu-app.apk"
+    outside.parent.mkdir()
+    outside.write_bytes(b"x")
+
+    binary_fetch.cleanup_staged_upload(str(outside))
+
+    assert outside.exists()
+
+
+def test_cleanup_staged_upload_ignores_remote_url():
+    binary_fetch.cleanup_staged_upload("https://example.com/app.apk")  # não levanta, não faz nada
+
+
+def test_validate_apk_accepts_real_apk_shaped_zip(tmp_path):
     path = tmp_path / "ok.apk"
-    path.write_bytes(b"PK\x03\x04" + b"resto")
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("AndroidManifest.xml", b"fake-binary-xml")
+        zf.writestr("classes.dex", b"fake-dex")
     binary_fetch.validate_apk(path)  # não levanta
 
 
@@ -112,6 +181,25 @@ def test_validate_apk_rejects_non_zip_content(tmp_path):
     path = tmp_path / "bad.apk"
     path.write_bytes(b"<html>404 not found</html>")
     with pytest.raises(binary_fetch.BinaryFetchError, match="não parece ser um .apk"):
+        binary_fetch.validate_apk(path)
+
+
+def test_validate_apk_rejects_truncated_zip(tmp_path):
+    # Assinatura de zip válida, mas o resto do arquivo não é um zip de
+    # verdade — download truncado/corrompido, não só um .apk errado.
+    path = tmp_path / "truncated.apk"
+    path.write_bytes(b"PK\x03\x04" + b"resto-nao-e-zip-de-verdade")
+    with pytest.raises(binary_fetch.BinaryFetchError, match="corrompido ou incompleto"):
+        binary_fetch.validate_apk(path)
+
+
+def test_validate_apk_rejects_aab_disguised_as_apk(tmp_path):
+    # .aab também é um .zip válido (passa a assinatura), mas guarda o
+    # manifest em base/manifest/ em vez da raiz — não instalável direto.
+    path = tmp_path / "app.aab"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("base/manifest/AndroidManifest.xml", b"fake-protobuf-manifest")
+    with pytest.raises(binary_fetch.BinaryFetchError, match="\\.aab"):
         binary_fetch.validate_apk(path)
 
 

@@ -12,6 +12,7 @@ from pathlib import Path
 _tmp_dir = Path(tempfile.mkdtemp(prefix="argus-test-"))
 os.environ.setdefault("ARGUS_DB_PATH", str(_tmp_dir / "test.db"))
 os.environ.setdefault("ARGUS_ARTIFACTS_DIR", str(_tmp_dir / "artifacts"))
+os.environ.setdefault("ARGUS_UPLOADS_DIR", str(_tmp_dir / "uploads"))
 os.environ.setdefault("ARGUS_HOST", "127.0.0.1")
 
 if "ARGUS_SECRET_KEY" not in os.environ:

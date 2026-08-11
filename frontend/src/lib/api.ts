@@ -43,6 +43,24 @@ async function getHealth(): Promise<HealthResponse> {
   return res.json();
 }
 
+/** Sobe um .apk/.aab/.ipa/.zip local pra tela de Nova Execução — devolve o
+ * caminho absoluto onde o backend guardou o arquivo (mesma máquina, já que
+ * o Argus roda nativamente), pra usar como `binary_url` no POST /api/runs.
+ * FormData em vez de JSON: não passa por `request()` porque o
+ * `Content-Type: multipart/form-data; boundary=...` tem que ser definido
+ * pelo próprio fetch (o boundary depende do conteúdo) — um header fixo
+ * quebraria o parsing do multipart no FastAPI. */
+async function uploadBinary(file: File): Promise<{ path: string; filename: string; size: number }> {
+  const body = new FormData();
+  body.append('file', file);
+  const res = await fetch('/api/binaries/upload', { method: 'POST', credentials: 'include', body });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, errBody.error || `Upload falhou (${res.status})`);
+  }
+  return res.json();
+}
+
 export interface RunsFilter {
   status?: string;
   platform?: string;
@@ -52,6 +70,7 @@ export interface RunsFilter {
 
 export const api = {
   getHealth,
+  uploadBinary,
   getConfig: () => request<ProjectConfig>('/api/config'),
   saveConfig: (payload: Partial<ProjectConfig>) =>
     request<{ status: string; message: string }>('/api/config', {

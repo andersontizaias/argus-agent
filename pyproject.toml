@@ -61,7 +61,7 @@ ignore = [
 [tool.ruff.lint.flake8-bugbear]
 # B008 senão marca toda rota FastAPI com `= Depends(...)` — é assim que a
 # injeção de dependência do FastAPI funciona, não um mutable-default bug.
-extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Cookie", "fastapi.Path", "fastapi.Body"]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Cookie", "fastapi.Path", "fastapi.Body", "fastapi.File"]
 
 [tool.coverage.run]
 source = ["src"]
