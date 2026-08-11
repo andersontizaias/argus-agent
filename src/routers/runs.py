@@ -5,19 +5,29 @@ precisar da chave enquanto o servidor estiver em bind loopback."""
 import asyncio
 import io
 import json
+import shutil
+import uuid
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from src import auth, models, report, run_service, store
 from src.events import list_events
+from src.settings import uploads_dir
 
 router = APIRouter(dependencies=[Depends(auth.require_api_key)])
 
 TERMINAL_STATUSES = run_service.TERMINAL_STATUSES
+
+# Extensões aceitas pro upload de binário mobile — .aab entra na lista (pra
+# não confundir o usuário escondendo a opção), mas é rejeitado com uma
+# mensagem clara mais adiante no pipeline (validate_apk, em
+# tools/binary_fetch.py) já que ainda não instalamos .aab direto (falta
+# bundletool). .zip cobre o export de simulador iOS (Payload/*.app).
+_ALLOWED_BINARY_EXTENSIONS = {".apk", ".aab", ".ipa", ".zip"}
 
 
 class RunCreate(BaseModel):
@@ -68,6 +78,59 @@ def _run_detail_dict(run: models.Run) -> dict:
         "test_data_keys": sorted(store.get_run_test_data(run.id).keys()),
         "scenarios": [_scenario_dict(s) for s in store.list_scenarios(run.id)],
     }
+
+
+def _write_upload(raw_file, dest_path: Path) -> int:
+    """Copia `raw_file` (o arquivo bruto por baixo de um UploadFile) pra
+    `dest_path` em chunks, sem carregar tudo na memória de uma vez — função
+    síncrona de propósito, pra rodar dentro de um `asyncio.to_thread`."""
+    size = 0
+    with open(dest_path, "wb") as out:
+        while chunk := raw_file.read(1 << 20):
+            size += len(chunk)
+            out.write(chunk)
+    return size
+
+
+@router.post("/api/binaries/upload")
+async def upload_binary(file: UploadFile = File(...)):
+    """Recebe um .apk/.aab/.ipa/.zip da tela de Nova Execução e devolve o
+    caminho absoluto onde ficou — a UI manda esse caminho de volta como
+    `binary_url` no POST /api/runs (mesmo campo que já aceitava uma URL
+    http(s); `fetch_binary`, em tools/binary_fetch.py, reconhece um caminho
+    local e copia em vez de baixar). Fica em `uploads_dir()`, uma área de
+    estágio: some assim que a run correspondente é provisionada (ver
+    `cleanup_staged_upload`) — ou, se a run nunca chegar a existir, é varrido
+    depois de um tempo pelo mesmo ciclo de manutenção que faz o prune de
+    runs antigas (ver prune.py)."""
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _ALLOWED_BINARY_EXTENSIONS:
+        allowed = ", ".join(sorted(_ALLOWED_BINARY_EXTENSIONS))
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Extensão não suportada: '{suffix or '(nenhuma)'}'. Use uma dessas: {allowed}."},
+        )
+
+    # Nome de arquivo é só o basename do que o cliente mandou — nunca os
+    # componentes de diretório (um client malicioso/estranho não decide onde
+    # o arquivo cai no disco; o id aleatório do diretório já cuida de evitar
+    # colisão entre uploads concorrentes).
+    dest_dir = uploads_dir() / uuid.uuid4().hex
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / Path(file.filename or "app").name
+
+    # `file.file` é o SpooledTemporaryFile/arquivo real por baixo do
+    # UploadFile — ler/escrever ele é bloqueante (síncrono), então roda
+    # tudo numa thread de uma vez (mesmo padrão de tools/binary_fetch.py)
+    # em vez de misturar `await file.read()` com `open()`/`write()`
+    # bloqueante direto no corpo da rota async.
+    size = await asyncio.to_thread(_write_upload, file.file, dest_path)
+
+    if size == 0:
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        return JSONResponse(status_code=400, content={"error": "Arquivo enviado está vazio."})
+
+    return {"path": str(dest_path), "filename": dest_path.name, "size": size}
 
 
 @router.post("/api/runs")

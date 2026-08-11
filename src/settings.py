@@ -28,6 +28,18 @@ def artifacts_dir() -> Path:
     return path
 
 
+def uploads_dir() -> Path:
+    """Área de estágio pra binários (.apk/.aab/.ipa/.zip) enviados pela tela
+    de Nova Execução — vida curta: `provision_target` copia pro
+    artifacts_dir da própria run assim que a run começa a rodar e apaga o
+    original daqui (ver agent/nodes.py), e `prune.py` varre o que sobrar
+    (upload feito mas run nunca criada) depois de um tempo."""
+    explicit = os.getenv("ARGUS_UPLOADS_DIR")
+    path = Path(explicit).expanduser() if explicit else Path.home() / ".argus" / "uploads"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def checkpoints_db_path() -> Path:
     explicit = os.getenv("ARGUS_DB_PATH")
     base = Path(explicit).expanduser().parent if explicit else Path.home() / ".argus"

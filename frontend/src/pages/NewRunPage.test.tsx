@@ -144,6 +144,55 @@ describe('NewRunPage', () => {
     expect(await screen.findByDisplayValue('{"usuario_valido": "standard_user"}')).toBeInTheDocument();
   });
 
+  it('uploads a local binary file and fills the binary URL field with the returned path', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn((path: string) => {
+      if (path === '/api/binaries/upload') {
+        return Promise.resolve(
+          jsonResponse({ path: '/Users/dev/.argus/uploads/abc123/app-debug.apk', filename: 'app-debug.apk', size: 42 })
+        );
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<NewRunPage />);
+
+    await user.selectOptions(screen.getByLabelText('Plataforma'), 'android');
+    const file = new File(['conteudo-fake'], 'app-debug.apk', { type: 'application/vnd.android.package-archive' });
+    await user.upload(screen.getByLabelText('Enviar arquivo local'), file);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('URL do binário')).toHaveValue('/Users/dev/.argus/uploads/abc123/app-debug.apk');
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/binaries/upload', expect.objectContaining({ method: 'POST' }));
+  });
+
+  it('rejects a .aab file client-side without uploading it', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<NewRunPage />);
+
+    await user.selectOptions(screen.getByLabelText('Plataforma'), 'android');
+    const file = new File(['conteudo-fake'], 'app.aab', { type: 'application/octet-stream' });
+    await user.upload(screen.getByLabelText('Enviar arquivo local'), file);
+
+    expect(screen.getByLabelText('URL do binário')).toHaveValue('');
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/binaries/upload', expect.anything());
+  });
+
+  it('accepts .ipa/.zip for iOS and .apk/.aab for Android in the file picker', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({})));
+    renderWithProviders(<NewRunPage />);
+
+    await user.selectOptions(screen.getByLabelText('Plataforma'), 'android');
+    expect(screen.getByLabelText('Enviar arquivo local')).toHaveAttribute('accept', '.apk,.aab');
+
+    await user.selectOptions(screen.getByLabelText('Plataforma'), 'ios');
+    expect(screen.getByLabelText('Enviar arquivo local')).toHaveAttribute('accept', '.ipa,.zip');
+  });
+
   it('disables providers without credentials configured in the dropdown', async () => {
     stubFetchWithConfig(fakeConfig({ anthropic_api_key: 'sk-a****' }));
     renderWithProviders(<NewRunPage />);

@@ -1,4 +1,6 @@
 """Testes de src/prune.py — retenção de runs antigas."""
+import os
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -78,3 +80,49 @@ def test_prune_is_noop_when_nothing_is_old_enough():
     _create_terminated_run(finished_days_ago=1)
 
     assert prune.prune_old_runs() == 0
+
+
+def _age_dir(path: Path, hours_ago: float) -> None:
+    stale_ts = time.time() - hours_ago * 3600
+    os.utime(path, (stale_ts, stale_ts))
+
+
+def test_prune_stale_uploads_removes_orphaned_upload_dirs(tmp_path, monkeypatch):
+    monkeypatch.setattr(prune, "uploads_dir", lambda: tmp_path)
+
+    orphan = tmp_path / "abc123"
+    orphan.mkdir()
+    (orphan / "app.apk").write_bytes(b"x")
+    _age_dir(orphan, hours_ago=prune.STALE_UPLOAD_HOURS + 1)
+
+    removed = prune.prune_stale_uploads()
+
+    assert removed == 1
+    assert not orphan.exists()
+
+
+def test_prune_stale_uploads_keeps_recent_upload_dirs(tmp_path, monkeypatch):
+    monkeypatch.setattr(prune, "uploads_dir", lambda: tmp_path)
+
+    recent = tmp_path / "def456"
+    recent.mkdir()
+    (recent / "app.ipa").write_bytes(b"x")
+
+    removed = prune.prune_stale_uploads()
+
+    assert removed == 0
+    assert recent.exists()
+
+
+def test_prune_stale_uploads_ignores_stray_files_at_top_level(tmp_path, monkeypatch):
+    # uploads_dir() só devia conter subpastas (uma por upload), mas não
+    # confia cegamente nisso — um arquivo solto não deve derrubar o prune.
+    monkeypatch.setattr(prune, "uploads_dir", lambda: tmp_path)
+    stray = tmp_path / "stray.txt"
+    stray.write_text("x")
+    _age_dir(stray, hours_ago=prune.STALE_UPLOAD_HOURS + 1)
+
+    removed = prune.prune_stale_uploads()
+
+    assert removed == 0
+    assert stray.exists()
