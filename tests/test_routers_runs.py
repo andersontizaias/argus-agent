@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -38,6 +39,47 @@ def test_create_run_rejects_invalid_bdd_syntax():
     with _client() as client:
         resp = client.post("/api/runs", json={"platform": "web", "bdd_script": "isso não é gherkin {{{"})
     assert resp.status_code == 400
+
+
+def test_upload_binary_saves_file_and_returns_local_path():
+    with _client() as client:
+        resp = client.post(
+            "/api/binaries/upload",
+            files={"file": ("app-debug.apk", b"conteudo-fake-do-apk", "application/vnd.android.package-archive")},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["filename"] == "app-debug.apk"
+    assert body["size"] == len(b"conteudo-fake-do-apk")
+    saved = Path(body["path"])
+    assert saved.is_file()
+    assert saved.read_bytes() == b"conteudo-fake-do-apk"
+    saved.unlink()
+    saved.parent.rmdir()
+
+
+def test_upload_binary_accepts_aab_and_ipa_and_zip_extensions():
+    with _client() as client:
+        for filename in ("app.aab", "app.ipa", "app.zip"):
+            resp = client.post("/api/binaries/upload", files={"file": (filename, b"x", "application/octet-stream")})
+            assert resp.status_code == 200, filename
+            saved = Path(resp.json()["path"])
+            saved.unlink()
+            saved.parent.rmdir()
+
+
+def test_upload_binary_rejects_unsupported_extension():
+    with _client() as client:
+        resp = client.post("/api/binaries/upload", files={"file": ("app.exe", b"x", "application/octet-stream")})
+    assert resp.status_code == 400
+    assert "Extensão não suportada" in resp.json()["error"]
+
+
+def test_upload_binary_rejects_empty_file():
+    with _client() as client:
+        resp = client.post("/api/binaries/upload", files={"file": ("app.apk", b"", "application/octet-stream")})
+    assert resp.status_code == 400
+    assert "vazio" in resp.json()["error"]
 
 
 def test_create_run_rejects_missing_test_data_placeholder():

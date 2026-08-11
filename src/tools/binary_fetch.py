@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import asyncio
 import plistlib
+import shutil
 import zipfile
 from pathlib import Path
 
 import requests
 
+from src.settings import uploads_dir
 from src.user_secrets import get_secret_plain
 
 _APK_MAGIC = b"PK\x03\x04"  # todo .apk é um .zip — assinatura do header local de um zip
@@ -23,11 +25,39 @@ class BinaryFetchError(RuntimeError):
     nenhum cenário chegou a rodar."""
 
 
+def _local_path(url: str) -> Path | None:
+    """`binary_url` também aceita uma referência LOCAL em vez de uma URL
+    http(s) de verdade — tanto o arquivo que a tela de Nova Execução acabou
+    de subir via `POST /api/binaries/upload` (devolve um caminho absoluto)
+    quanto um caminho que o usuário digitou à mão, apontando pra um .apk/
+    .aab/.ipa/.zip já no disco. Reconhecido por `file://` explícito ou por
+    começar com `/` — uma URL http(s) nunca cai em nenhum dos dois, então
+    não tem ambiguidade com o caminho de download normal abaixo."""
+    if url.startswith("file://"):
+        return Path(url.removeprefix("file://"))
+    if url.startswith("/"):
+        return Path(url)
+    return None
+
+
+def _copy_local(src: Path, dest_path: Path) -> None:
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest_path)
+
+
 async def fetch_binary(url: str, auth_secret_name: str | None, dest_path: Path, *, timeout_seconds: int = 120) -> Path:
-    """Baixa `url` pra `dest_path`. Roda a chamada síncrona do `requests` numa
-    thread (padrão já usado em routers/config.py pra chamadas bloqueantes
-    dentro de handlers async) em vez de puxar uma dependência nova (httpx)
-    só pra isso."""
+    """Resolve `url` pra `dest_path` — copia se for uma referência local
+    (ver `_local_path`), baixa via HTTP senão. Roda a cópia/download síncronos
+    numa thread (padrão já usado em routers/config.py pra chamadas
+    bloqueantes dentro de handlers async) em vez de puxar uma dependência
+    nova (httpx) só pra isso."""
+    local_path = _local_path(url)
+    if local_path is not None:
+        if not local_path.is_file():
+            raise BinaryFetchError(f"Arquivo local não encontrado: {local_path}")
+        await asyncio.to_thread(_copy_local, local_path, dest_path)
+        return dest_path
+
     headers = {}
     if auth_secret_name:
         token = get_secret_plain(auth_secret_name)
@@ -54,17 +84,61 @@ async def fetch_binary(url: str, auth_secret_name: str | None, dest_path: Path, 
     return dest_path
 
 
+def cleanup_staged_upload(url: str) -> None:
+    """Se `url` apontava pra um arquivo dentro de `uploads_dir()` (subido
+    pela tela de Nova Execução via `POST /api/binaries/upload`), apaga a
+    pasta de estágio — chamado depois que `fetch_binary` já copiou o
+    conteúdo pro artifacts_dir da própria run, então o estágio não precisa
+    sobreviver além disso (era só uma ponte entre o upload do browser e o
+    provisionamento). Não mexe em nada fora de `uploads_dir()`: um caminho
+    local digitado à mão pelo usuário nunca é apagado por aqui — só o que a
+    própria API colocou lá."""
+    local_path = _local_path(url)
+    if local_path is None:
+        return
+    try:
+        local_path.resolve().relative_to(uploads_dir().resolve())
+    except ValueError:
+        return
+    shutil.rmtree(local_path.parent, ignore_errors=True)
+
+
 def validate_apk(path: Path) -> None:
-    """Confere que o arquivo baixado é mesmo um .apk (zip) antes de tentar
-    instalar — um link quebrado costuma devolver uma página HTML de erro com
-    HTTP 200 (ex.: login expirado num artifact store), o que passaria batido
-    sem essa checagem e só falharia depois, de forma confusa, dentro do
-    `adb install`."""
+    """Confere que o arquivo é mesmo um .apk instalável antes de tentar rodar
+    — um link quebrado costuma devolver uma página HTML de erro com HTTP 200
+    (ex.: login expirado num artifact store), o que passaria batido sem essa
+    checagem e só falharia depois, de forma confusa, dentro do `adb install`.
+
+    Também rejeita um .aab (Android App Bundle) que chegou aqui disfarçado —
+    mesmo caso: passaria pela assinatura de zip (um .aab também é um .zip)
+    e só falharia depois, de forma ainda mais confusa, dentro da criação da
+    sessão do Appium. Um .apk de verdade sempre tem `AndroidManifest.xml` na
+    raiz do zip; um .aab guarda o manifest em `base/manifest/` (formato
+    protobuf, não instalável direto) — não existe suporte a bundletool aqui."""
     with open(path, "rb") as f:
         head = f.read(4)
     if head != _APK_MAGIC:
         raise BinaryFetchError(
-            "O arquivo baixado não parece ser um .apk válido (não é um .zip) — confira a binary_url e o binary_auth_secret da run."
+            "O arquivo não parece ser um .apk válido (não é um .zip) — confira a binary_url/o arquivo enviado."
+        )
+    try:
+        with zipfile.ZipFile(path) as zf:
+            has_manifest = "AndroidManifest.xml" in zf.namelist()
+    except zipfile.BadZipFile as e:
+        # Começa com a assinatura de um .zip (checado acima) mas o resto do
+        # arquivo não é um .zip válido — download truncado/corrompido é o
+        # caso real mais comum, não só um teste com um fixture contrived.
+        raise BinaryFetchError(
+            "O arquivo começa com a assinatura de um .zip mas está corrompido ou incompleto — "
+            "confira a binary_url/o arquivo enviado (um download truncado é a causa mais comum)."
+        ) from e
+    if not has_manifest:
+        raise BinaryFetchError(
+            "O arquivo não tem AndroidManifest.xml na raiz do zip, então não é um .apk instalável — "
+            "isso é o que acontece quando o arquivo é na verdade um .aab (Android App Bundle), que o "
+            "Argus ainda não sabe instalar direto (falta suporte a bundletool). Gere um .apk universal "
+            "(`bundletool build-apks --mode=universal` a partir do .aab, ou exporte um .apk direto pelo "
+            "Android Studio/Gradle) e aponte pra ele."
         )
 
 

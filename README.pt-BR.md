@@ -146,7 +146,7 @@ AgentCard em `/.well-known/agent-card.json`, rota `/a2a`. Skill `execute_qa_test
 
 ## ⚙️ Configuração
 
-Variáveis de ambiente (`.env`, ver [`.env.example`](./.env.example)): `ARGUS_SECRET_KEY` (chave Fernet — cifra credenciais em repouso), `ARGUS_DB_PATH`, `ARGUS_ARTIFACTS_DIR`, `ARGUS_HOST`/`ARGUS_PORT`, `ARGUS_REQUIRE_API_KEY`, `APPIUM_BASE_PORT`, `ARGUS_ANDROID_AVD`/`ARGUS_ANDROID_EMULATOR_PORT`, `ARGUS_IOS_DEVICE`.
+Variáveis de ambiente (`.env`, ver [`.env.example`](./.env.example)): `ARGUS_SECRET_KEY` (chave Fernet — cifra credenciais em repouso), `ARGUS_DB_PATH`, `ARGUS_ARTIFACTS_DIR`, `ARGUS_UPLOADS_DIR`, `ARGUS_HOST`/`ARGUS_PORT`, `ARGUS_REQUIRE_API_KEY`, `APPIUM_BASE_PORT`, `ARGUS_ANDROID_AVD`/`ARGUS_ANDROID_EMULATOR_PORT`, `ARGUS_IOS_DEVICE`.
 
 Provider de LLM, secrets de binário e retenção de relatórios (`retention_days`, 30 dias por padrão — `0` desliga o prune) ficam em `/api/config`, editáveis pela UI.
 

@@ -42,6 +42,7 @@ from src.tools import device_android, device_ios
 from src.tools.appium_server import AppiumHandle, start_appium, stop_appium
 from src.tools.binary_fetch import (
     bundle_id_from_app,
+    cleanup_staged_upload,
     extract_ios_app,
     fetch_binary,
     validate_apk,
@@ -235,6 +236,7 @@ async def _provision_android(state: RunState, run_id: str, run) -> RunState:
     resources = _RunResources()
     try:
         await fetch_binary(run.binary_url, run.binary_auth_secret, apk_path)
+        cleanup_staged_upload(run.binary_url)
         validate_apk(apk_path)
 
         emulator = await _acquire_emulator()
@@ -287,6 +289,7 @@ async def _provision_ios(state: RunState, run_id: str, run) -> RunState:
     resources = _RunResources()
     try:
         await fetch_binary(run.binary_url, run.binary_auth_secret, zip_path)
+        cleanup_staged_upload(run.binary_url)
         app_path = extract_ios_app(zip_path, run_dir / "extracted")
         validate_simulator_app(app_path)
         bundle_id = bundle_id_from_app(app_path)

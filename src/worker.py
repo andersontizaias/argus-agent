@@ -78,6 +78,10 @@ async def _maybe_prune() -> None:
         await asyncio.to_thread(prune.prune_old_runs)
     except Exception as e:  # nunca deve derrubar o worker — é manutenção, não o caminho crítico
         logger.warning("Falha ao rodar o prune de runs antigas: %s", e)
+    try:
+        await asyncio.to_thread(prune.prune_stale_uploads)
+    except Exception as e:
+        logger.warning("Falha ao rodar o prune de uploads órfãos: %s", e)
 
 
 async def _loop() -> None:

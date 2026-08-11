@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useConfig, useCreateRun } from '@/lib/queries';
-import { ApiError } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { isProviderConfigured, LLM_PROVIDERS } from '@/lib/llmProviders';
 import type { RunPlatform } from '@/types/api';
 
@@ -53,6 +53,7 @@ export function NewRunPage() {
   const [appUrl, setAppUrl] = useState('');
   const [binaryUrl, setBinaryUrl] = useState('');
   const [binaryAuthSecret, setBinaryAuthSecret] = useState('');
+  const [binaryUploading, setBinaryUploading] = useState(false);
   const [bddScript, setBddScript] = useState('');
   const [testDataJson, setTestDataJson] = useState('{}');
   const [llmProvider, setLlmProvider] = useState('');
@@ -61,9 +62,40 @@ export function NewRunPage() {
 
   const bddFileInputRef = useRef<HTMLInputElement>(null);
   const testDataFileInputRef = useRef<HTMLInputElement>(null);
+  const binaryFileInputRef = useRef<HTMLInputElement>(null);
 
   function handleBddFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     readUploadedFile(e, setBddScript, () => toast.error(t('newRun.fileReadError')));
+  }
+
+  /** Sobe um .apk/.aab/.ipa/.zip local pro backend e usa o caminho
+   * devolvido como binary_url — mesmo campo que já aceitava uma URL
+   * http(s) (o backend reconhece um caminho local e copia em vez de
+   * baixar, ver tools/binary_fetch.py). .aab é rejeitado ANTES de subir
+   * (sem round-trip pra um arquivo potencialmente grande à toa): não é
+   * instalável direto ainda (falta suporte a bundletool), então o upload
+   * só resultaria numa run falhando depois, de forma mais confusa. */
+  async function handleBinaryFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    const input = e.target;
+    input.value = '';
+    if (!file) return;
+
+    if (file.name.toLowerCase().endsWith('.aab')) {
+      toast.error(t('newRun.aabNotSupported'));
+      return;
+    }
+
+    setBinaryUploading(true);
+    try {
+      const uploaded = await api.uploadBinary(file);
+      setBinaryUrl(uploaded.path);
+      toast.success(t('newRun.binaryUploaded', { filename: uploaded.filename }));
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBinaryUploading(false);
+    }
   }
 
   function handleTestDataFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -174,10 +206,30 @@ export function NewRunPage() {
             ) : (
               <>
                 <div className="space-y-2">
-                  <Label htmlFor="binary-url">{t('newRun.binaryUrl')}</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="binary-url">{t('newRun.binaryUrl')}</Label>
+                    <input
+                      ref={binaryFileInputRef}
+                      type="file"
+                      accept={platform === 'ios' ? '.ipa,.zip' : '.apk,.aab'}
+                      aria-label={t('newRun.uploadBinaryFile')}
+                      className="hidden"
+                      onChange={handleBinaryFileChange}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={binaryUploading}
+                      onClick={() => binaryFileInputRef.current?.click()}
+                    >
+                      <Upload className="h-4 w-4" />
+                      {binaryUploading ? t('newRun.binaryUploading') : t('newRun.uploadBinaryFile')}
+                    </Button>
+                  </div>
                   <Input
                     id="binary-url"
-                    type="url"
+                    type="text"
                     placeholder="https://exemplo.com/app.apk"
                     value={binaryUrl}
                     onChange={(e) => setBinaryUrl(e.target.value)}
