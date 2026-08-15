@@ -29,6 +29,7 @@
 - [🚀 Rodando](#-rodando)
 - [🔁 LaunchAgents (subir sozinho no login)](#-launchagents-subir-sozinho-no-login)
 - [📖 Uso](#-uso)
+  - [📱 Binários mobile](#-binários-mobile)
   - [📡 API REST](#-api-rest)
   - [🔌 MCP](#-mcp)
   - [🤝 A2A](#-a2a)
@@ -126,9 +127,17 @@ O `launchd` sobe os dois processos no login e reinicia se caírem (`KeepAlive`) 
 2. Em **Nova Execução**, escolha a plataforma (web via URL, Android/iOS via binário), cole o script BDD e a massa de testes.
 3. Acompanhe ao vivo em **Detalhe da Run** (cenários/passos mudando de estado, screenshots) ou via API.
 
+### 📱 Binários mobile
+
+O campo `binary_url` (runs Android/iOS) aceita uma URL `http(s)` de verdade — opcionalmente protegida, basta colocar em `binary_auth_secret` o nome de um secret cadastrado em **Config**, que vai como Bearer token — ou um arquivo local: subido direto pela tela de **Nova Execução**, ou referenciado por caminho absoluto/`file://` se já estiver na máquina onde o Argus roda.
+
+- **Android**: um `.apk` puro. Só tem um `.aab`? Gere um `.apk` universal a partir dele primeiro (`bundletool build-apks --mode=universal`) — o Argus não instala `.aab` direto.
+- **iOS**: um `.zip` contendo um build de **Simulador** do `.app` (`Payload/<Nome>.app/`), não um `.ipa` de dispositivo — só Simulador é suportado por enquanto, nada de aparelho físico. O que importa é o conteúdo, não a extensão do arquivo: o `Info.plist` do `.app` precisa ter `iPhoneSimulator` em `CFBundleSupportedPlatforms`, então um zip nomeado `.ipa` funciona numa boa desde que o que está dentro tenha sido buildado com o SDK de Simulador. A maioria dos `.ipa` que você já tem por aí (TestFlight, App Store, Ad Hoc) são builds de dispositivo e são rejeitados com um erro claro, em vez de falhar de forma críptica no meio da run.
+  Jeito típico de gerar um: `xcodebuild ... -sdk iphonesimulator -derivedDataPath build` (ou `fastlane gym`/`build_app` com `destination: "generic/platform=iOS Simulator"`, `skip_package_ipa: true`), depois zipa o resultado: `ditto -c -k --sequesterRsrc --keepParent build/.../SeuApp.app SeuApp.zip`.
+
 ### 📡 API REST
 
-`POST /api/runs` · `GET /api/runs` · `GET /api/runs/{id}` · `POST /api/runs/{id}/cancel` · `GET /api/runs/{id}/stream` (SSE) · `GET /api/runs/{id}/report[.html]` · `GET /api/runs/{id}/artifacts.zip` · `GET /api/evidences/{id}` · `GET`/`POST /api/config` · `POST /api/config/test-llm-provider/{id}` · CRUD `/api/api-keys` · `GET /api/health`.
+`POST /api/runs` · `GET /api/runs` · `GET /api/runs/{id}` · `POST /api/runs/{id}/cancel` · `GET /api/runs/{id}/stream` (SSE) · `GET /api/runs/{id}/report[.html]` · `GET /api/runs/{id}/artifacts.zip` · `GET /api/evidences/{id}` · `POST /api/binaries/upload` · `GET`/`POST /api/config` · `POST /api/config/test-llm-provider/{id}` · CRUD `/api/api-keys` · `GET /api/health`.
 
 Autenticação por `X-API-Key: argus_<prefix>_<random>` (exibida uma vez na criação). Fluxo típico de CI: `POST /api/runs` → poll/SSE → exit code pelo `status` final → baixa `report.json`.
 
@@ -148,7 +157,7 @@ AgentCard em `/.well-known/agent-card.json`, rota `/a2a`. Skill `execute_qa_test
 
 Variáveis de ambiente (`.env`, ver [`.env.example`](./.env.example)): `ARGUS_SECRET_KEY` (chave Fernet — cifra credenciais em repouso), `ARGUS_DB_PATH`, `ARGUS_ARTIFACTS_DIR`, `ARGUS_UPLOADS_DIR`, `ARGUS_HOST`/`ARGUS_PORT`, `ARGUS_REQUIRE_API_KEY`, `APPIUM_BASE_PORT`, `ARGUS_ANDROID_AVD`/`ARGUS_ANDROID_EMULATOR_PORT`, `ARGUS_IOS_DEVICE`.
 
-Provider de LLM, secrets de binário e retenção de relatórios (`retention_days`, 30 dias por padrão — `0` desliga o prune) ficam em `/api/config`, editáveis pela UI.
+Providers de LLM, secrets de binário e retenção de relatórios (`retention_days`, 30 dias por padrão — `0` desliga o prune) ficam em `/api/config`, editáveis pela UI. Cada provider guarda sua própria chave e modelo default lado a lado (escolher um "provider default" não faz perder o modelo configurado dos outros); o AWS Bedrock aceita tanto uma API key (bearer token, curta ou longa duração) quanto credenciais IAM clássicas (access key/secret/session token).
 
 ## 📊 Relatórios
 
@@ -161,7 +170,7 @@ uv run pytest --cov
 cd frontend && npm run test:coverage
 ```
 
-CI (`ci.yml`) roda ruff, mypy, pytest (cobertura ≥90%), complexidade (`xenon`), duplicação (`jscpd`), segurança (`pip-audit`, `npm audit`, gitleaks) e o build+testes do frontend. Releases (`release.yml`) disparam em tag `v*`, publicando o tarball + `install.sh` na GitHub Release.
+CI (`ci.yml`) roda ruff, mypy, pytest (cobertura ≥90%), complexidade (`xenon`), duplicação (`jscpd`), segurança (`pip-audit`, `npm audit`, gitleaks) e o build+testes do frontend (cobertura ≥90% também). Releases (`release.yml`) disparam em merge pra `main` — lê a versão direto do `pyproject.toml` e só publica se essa versão ainda não tiver tag, então um merge sem bump de versão é um no-op. Publica o tarball + `install.sh` e, num job separado em macOS, o instalador `.dmg`, na GitHub Release. Veja [`CONTRIBUTING.md`](./CONTRIBUTING.md) *(em inglês)* pro fluxo completo branch → release.
 
 ## 🌱 Contribuindo
 
