@@ -119,16 +119,15 @@ export function NewRunPage() {
       setLlmModel('');
       return;
     }
-    // Não existe uma lista de "modelos cadastrados" por provider (só um
-    // default global) — se o provider escolhido é o default configurado,
-    // sugere o modelo default; senão, o exemplo do provider. Continua um
-    // campo editável, não trava no sugerido.
+    // Cada provider guarda seu próprio modelo configurado (campo "Modelo"
+    // na ConfigPage, ao lado da chave dele) — usa o desse provider
+    // independente de qual é o "provider default" global; sem isso, trocar
+    // pra um provider não-default aqui sempre sugeria o exemplo hardcoded,
+    // ignorando um modelo que a pessoa já tinha configurado pra ele.
+    // Continua um campo editável, não trava no sugerido.
     const provider = LLM_PROVIDERS.find((p) => p.id === id);
-    if (id === config?.default_llm_provider && config?.default_llm_model) {
-      setLlmModel(config.default_llm_model);
-    } else {
-      setLlmModel(provider?.exampleModel ?? '');
-    }
+    const configuredModel = provider ? config?.[provider.defaultModelField] : undefined;
+    setLlmModel(configuredModel || provider?.exampleModel || '');
   }
 
   async function handleSubmit(e: React.FormEvent) {

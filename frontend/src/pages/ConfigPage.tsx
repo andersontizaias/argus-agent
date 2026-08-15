@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Select } from '@/components/ui/select';
 import { useApiKeys, useConfig, useCreateApiKey, useHealth, useRevokeApiKey, useSaveConfig, useTestLlmProvider } from '@/lib/queries';
-import { LLM_PROVIDERS } from '@/lib/llmProviders';
+import { isProviderConfigured, LLM_PROVIDERS } from '@/lib/llmProviders';
 import type { ProjectConfig } from '@/types/api';
 
 function ApiKeysSection() {
@@ -205,6 +206,17 @@ export function ConfigPage() {
                   {testProvider.isPending || saveConfig.isPending ? t('config.testing') : t('config.testProvider')}
                 </Button>
               </div>
+              <div className="space-y-1">
+                <Label htmlFor={`${provider.id}-model`} className="text-xs font-normal text-muted-foreground">{t('config.model')}</Label>
+                <Input
+                  id={`${provider.id}-model`}
+                  type="text"
+                  placeholder={provider.exampleModel || t('config.model')}
+                  value={field(provider.defaultModelField)}
+                  onChange={(e) => setField(provider.defaultModelField, e.target.value)}
+                  className="sm:max-w-sm"
+                />
+              </div>
               {provider.helpText && <p className="text-xs text-muted-foreground">{provider.helpText}</p>}
               {provider.advancedFields && (
                 <div className="space-y-2">
@@ -238,20 +250,26 @@ export function ConfigPage() {
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label>{t('config.defaultProvider')}</Label>
-              <Input
-                value={field('default_llm_provider')}
-                onChange={(e) => setField('default_llm_provider', e.target.value)}
-                placeholder="anthropic"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>{t('config.defaultModel')}</Label>
-              <Input
-                value={field('default_llm_model')}
-                onChange={(e) => setField('default_llm_model', e.target.value)}
-                placeholder="claude-3-5-haiku-latest"
-              />
+              <Label htmlFor="default-provider">{t('config.defaultProvider')}</Label>
+              {/* Cada provider já leva seu próprio modelo (campo "Modelo"
+                  ao lado da chave/URL dele, acima) — este seletor só
+                  escolhe QUAL provider é usado quando uma run não
+                  especificar um. Restrito aos providers configurados
+                  (mesmo padrão do dropdown de override na Nova Execução,
+                  frontend/src/pages/NewRunPage.tsx) em vez de texto livre —
+                  não dá pra "default" um provider sem credenciais. */}
+              <Select id="default-provider" value={field('default_llm_provider')} onChange={(e) => setField('default_llm_provider', e.target.value)}>
+                <option value="">{t('config.noDefaultProvider')}</option>
+                {LLM_PROVIDERS.map((provider) => {
+                  const configured = isProviderConfigured(provider, values);
+                  return (
+                    <option key={provider.id} value={provider.id} disabled={!configured}>
+                      {provider.label}
+                      {!configured ? ` (${t('newRun.providerNotConfigured')})` : ''}
+                    </option>
+                  );
+                })}
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>{t('config.retentionDays')}</Label>

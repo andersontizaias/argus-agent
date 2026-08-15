@@ -14,6 +14,7 @@ from src import auth, prune, store, user_secrets
 from src.llm_providers import (
     SUPPORTED_PROVIDERS,
     build_chat_model,
+    default_model_setting_name,
     is_provider_configured,
 )
 
@@ -36,6 +37,14 @@ def _preserve_masked(new_value: str, existing_value: str) -> str:
     return new_value
 
 
+def _set_setting_if_provided(key: str, value: str | None) -> None:
+    """`None` = o campo não veio no corpo do POST — não mexe no setting já
+    salvo. `""` continua um valor válido e intencional (ver comentário em
+    `ConfigUpdate`) — só a ausência do campo é ignorada."""
+    if value is not None:
+        store.set_setting(key, value)
+
+
 _BEDROCK_ADVANCED_SECRET_NAMES = ("bedrock_access_key_id", "bedrock_secret_access_key", "bedrock_session_token")
 
 
@@ -56,30 +65,52 @@ async def get_config():
         "custom_llm_base_url": store.get_setting("custom_llm_base_url"),
         "bedrock_region": store.get_setting("bedrock_region"),
         "default_llm_provider": store.get_setting("default_llm_provider"),
-        "default_llm_model": store.get_setting("default_llm_model"),
         "retention_days": store.get_setting("retention_days") or str(prune.DEFAULT_RETENTION_DAYS),
     }
+    # Modelo default é um setting POR provider (não um único global) — cada
+    # provider configurado guarda o seu preferido, ao lado da chave/URL dele
+    # na UI, em vez de uma seção separada desacoplada de qual provider é.
+    settings.update({default_model_setting_name(p): store.get_setting(default_model_setting_name(p)) for p in SUPPORTED_PROVIDERS})
     return {**secrets, **settings}
 
 
 class ConfigUpdate(BaseModel):
+    # Secrets: sempre `str = ""` — a ausência de "clientes parciais" pra
+    # secrets não importa aqui porque `_preserve_masked` já trata "" (e o
+    # placeholder mascarado) como "não mexeu, preserva o que já tem".
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     gemini_api_key: str = ""
     groq_api_key: str = ""
     ollama_api_key: str = ""
-    ollama_base_url: str = ""
-    ollama_timeout_seconds: str = ""
     custom_llm_api_key: str = ""
-    custom_llm_base_url: str = ""
     bedrock_api_key: str = ""
     bedrock_access_key_id: str = ""
     bedrock_secret_access_key: str = ""
     bedrock_session_token: str = ""
-    bedrock_region: str = ""
-    default_llm_provider: str = ""
-    default_llm_model: str = ""
-    retention_days: str = ""
+
+    # Settings: `str | None = None` (campo OMITIDO no JSON vira None) em vez
+    # de `str = ""` — sem isso, um POST parcial (qualquer caller que não seja
+    # a própria UI, que sempre reenvia o estado inteiro da tela) reseta pra
+    # vazio todo campo que não mandou, silenciosamente. `""` continua um
+    # valor válido e intencional (ex.: limpar "Provider default" via
+    # "Nenhum" na UI) — só a ausência do campo é ignorada, nunca o valor
+    # vazio explícito. Visto ao vivo: um POST com corpo `{}` apagou
+    # ollama_base_url/bedrock_region/default_llm_provider de uma instância
+    # real.
+    ollama_base_url: str | None = None
+    ollama_timeout_seconds: str | None = None
+    custom_llm_base_url: str | None = None
+    bedrock_region: str | None = None
+    default_llm_provider: str | None = None
+    anthropic_default_model: str | None = None
+    openai_default_model: str | None = None
+    gemini_default_model: str | None = None
+    groq_default_model: str | None = None
+    ollama_default_model: str | None = None
+    custom_llm_default_model: str | None = None
+    bedrock_default_model: str | None = None
+    retention_days: str | None = None
 
 
 @router.post("/api/config")
@@ -105,13 +136,15 @@ async def save_config(update: ConfigUpdate):
         existing = user_secrets.get_secret_plain(name)
         user_secrets.set_secret_plain(name, _preserve_masked(new_value, existing))
 
-    store.set_setting("ollama_base_url", update.ollama_base_url)
-    store.set_setting("ollama_timeout_seconds", update.ollama_timeout_seconds)
-    store.set_setting("custom_llm_base_url", update.custom_llm_base_url)
-    store.set_setting("bedrock_region", update.bedrock_region)
-    store.set_setting("default_llm_provider", update.default_llm_provider)
-    store.set_setting("default_llm_model", update.default_llm_model)
-    store.set_setting("retention_days", update.retention_days)
+    _set_setting_if_provided("ollama_base_url", update.ollama_base_url)
+    _set_setting_if_provided("ollama_timeout_seconds", update.ollama_timeout_seconds)
+    _set_setting_if_provided("custom_llm_base_url", update.custom_llm_base_url)
+    _set_setting_if_provided("bedrock_region", update.bedrock_region)
+    _set_setting_if_provided("default_llm_provider", update.default_llm_provider)
+    for provider in SUPPORTED_PROVIDERS:
+        key = default_model_setting_name(provider)
+        _set_setting_if_provided(key, getattr(update, key, None))
+    _set_setting_if_provided("retention_days", update.retention_days)
     return {"status": "ok", "message": "Configuração salva com sucesso."}
 
 
@@ -127,14 +160,12 @@ async def test_llm_provider(provider_id: str):
     if not is_provider_configured(provider_id):
         return JSONResponse(status_code=400, content={"error": f"{provider.label} isn't configured."})
 
-    # Provider cloud: qualquer example_model fixo sempre existe do lado do
-    # provider. Ollama é diferente — só funciona se o modelo já tiver sido
-    # baixado NAQUELE servidor — então testa com o modelo default que o
-    # usuário configurou pra esse provider (quando houver um), não um nome
-    # hardcoded que pode nunca ter sido `ollama pull`ado lá.
-    test_model = provider.example_model
-    if store.get_setting("default_llm_provider") == provider_id:
-        test_model = store.get_setting("default_llm_model") or test_model
+    # Cada provider guarda seu próprio modelo default (não só o "provider
+    # default" global) — testa com ele quando existir. Importa
+    # especialmente pro Ollama: só funciona se o modelo já tiver sido
+    # baixado NAQUELE servidor, então o `example_model` hardcoded pode nunca
+    # ter sido `ollama pull`ado lá.
+    test_model = store.get_setting(default_model_setting_name(provider)) or provider.example_model
 
     # Providers cloud: 15s é de sobra pra um "pong" de 5 tokens — falha
     # rápido se a credencial estiver errada. Ollama é o oposto: mesmo com

@@ -18,7 +18,7 @@ def _configure_default_provider():
         client.post("/api/config", json={
             "anthropic_api_key": "sk-ant-abcdefgh12345678",
             "default_llm_provider": "anthropic",
-            "default_llm_model": "claude-3-5-haiku-latest",
+            "anthropic_default_model": "claude-3-5-haiku-latest",
         })
 
 

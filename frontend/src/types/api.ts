@@ -12,21 +12,27 @@ export interface HealthResponse {
 
 export interface ProjectConfig {
   anthropic_api_key: string;
+  anthropic_default_model: string;
   openai_api_key: string;
+  openai_default_model: string;
   gemini_api_key: string;
+  gemini_default_model: string;
   groq_api_key: string;
+  groq_default_model: string;
   ollama_api_key: string;
   ollama_base_url: string;
   ollama_timeout_seconds: string;
+  ollama_default_model: string;
   custom_llm_api_key: string;
   custom_llm_base_url: string;
+  custom_llm_default_model: string;
   bedrock_api_key: string;
   bedrock_region: string;
   bedrock_access_key_id: string;
   bedrock_secret_access_key: string;
   bedrock_session_token: string;
+  bedrock_default_model: string;
   default_llm_provider: string;
-  default_llm_model: string;
   retention_days: string;
 }
 
