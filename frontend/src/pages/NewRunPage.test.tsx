@@ -20,6 +20,8 @@ function fakeConfig(overrides: Partial<ProjectConfig> = {}): ProjectConfig {
     anthropic_api_key: '', openai_api_key: '', gemini_api_key: '', groq_api_key: '',
     ollama_api_key: '', ollama_base_url: '', ollama_timeout_seconds: '',
     custom_llm_api_key: '', custom_llm_base_url: '',
+    bedrock_api_key: '', bedrock_region: '', bedrock_access_key_id: '',
+    bedrock_secret_access_key: '', bedrock_session_token: '',
     default_llm_provider: '', default_llm_model: '', retention_days: '30',
     ...overrides,
   };

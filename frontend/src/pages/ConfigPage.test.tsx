@@ -128,6 +128,47 @@ describe('ConfigPage', () => {
     expect(modelInput).toHaveValue('claude-3-5-haiku-latest');
   });
 
+  it('shows the Bedrock API key + region fields by default, with the SigV4 fields collapsed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((path: string) => {
+        if (path === '/api/config') return Promise.resolve(jsonResponse(BASE_CONFIG));
+        if (path === '/api/health') return Promise.resolve(jsonResponse(BASE_HEALTH));
+        return Promise.resolve(jsonResponse({}));
+      })
+    );
+    renderWithProviders(<ConfigPage />);
+
+    expect(await screen.findByPlaceholderText('us-east-1 (região AWS)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mostrar campos avançados' })).toBeInTheDocument();
+    expect(screen.queryByText('AWS Access Key ID')).not.toBeInTheDocument();
+  });
+
+  it('reveals and fills the Bedrock SigV4 advanced fields', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((path: string) => {
+        if (path === '/api/config') return Promise.resolve(jsonResponse(BASE_CONFIG));
+        if (path === '/api/health') return Promise.resolve(jsonResponse(BASE_HEALTH));
+        return Promise.resolve(jsonResponse({}));
+      })
+    );
+    renderWithProviders(<ConfigPage />);
+
+    await user.click(await screen.findByRole('button', { name: 'Mostrar campos avançados' }));
+
+    const accessKeyInput = await screen.findByLabelText('AWS Access Key ID');
+    await user.type(accessKeyInput, 'AKIAEXAMPLE');
+    expect(accessKeyInput).toHaveValue('AKIAEXAMPLE');
+
+    const secretKeyInput = screen.getByLabelText('AWS Secret Access Key');
+    await user.type(secretKeyInput, 'super-secret-value');
+    expect(secretKeyInput).toHaveValue('super-secret-value');
+
+    expect(screen.getByRole('button', { name: 'Esconder campos avançados' })).toBeInTheDocument();
+  });
+
   it('does not crash when saving fails (error handled via toast)', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn((path: string, opts?: RequestInit) => {

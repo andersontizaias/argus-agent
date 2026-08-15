@@ -142,3 +142,88 @@ def test_build_chat_model_ollama_uses_configured_timeout():
     store.set_setting("ollama_timeout_seconds", "600")
     model = llm_providers.build_chat_model("ollama", "qwen2.5:14b", "")
     assert model.request_timeout == 600
+
+
+# --- Bedrock: dois modos de auth mutuamente exclusivos (API key vs. SigV4) ---
+
+
+def test_is_provider_configured_bedrock_false_when_nothing_set():
+    assert llm_providers.is_provider_configured("bedrock") is False
+
+
+def test_is_provider_configured_bedrock_false_with_region_but_no_credentials():
+    store.set_setting("bedrock_region", "us-east-1")
+    assert llm_providers.is_provider_configured("bedrock") is False
+
+
+def test_is_provider_configured_bedrock_true_with_api_key():
+    store.set_setting("bedrock_region", "us-east-1")
+    store.set_secret("bedrock_api_key", "enc-token")
+    assert llm_providers.is_provider_configured("bedrock") is True
+
+
+def test_is_provider_configured_bedrock_true_with_sigv4_no_session_token():
+    # session_token é opcional no modo SigV4 — credencial de IAM user
+    # (longa duração) não tem um.
+    store.set_setting("bedrock_region", "us-east-1")
+    store.set_secret("bedrock_access_key_id", "enc-access-key")
+    store.set_secret("bedrock_secret_access_key", "enc-secret-key")
+    assert llm_providers.is_provider_configured("bedrock") is True
+
+
+def test_is_provider_configured_bedrock_false_with_only_access_key_id():
+    store.set_setting("bedrock_region", "us-east-1")
+    store.set_secret("bedrock_access_key_id", "enc-access-key")
+    assert llm_providers.is_provider_configured("bedrock") is False
+
+
+def test_build_chat_model_bedrock_without_region_raises():
+    store.set_setting("bedrock_region", "")
+    with pytest.raises(ValueError, match="AWS region"):
+        llm_providers.build_chat_model("bedrock", "some-model", "token")
+
+
+def test_build_chat_model_bedrock_without_any_credentials_raises():
+    store.set_setting("bedrock_region", "us-east-1")
+    with pytest.raises(ValueError, match="API key or an AWS access key"):
+        llm_providers.build_chat_model("bedrock", "some-model", "")
+
+
+def test_build_chat_model_bedrock_returns_chat_bedrock_converse_with_api_key():
+    from langchain_aws import ChatBedrockConverse
+
+    store.set_setting("bedrock_region", "us-east-1")
+    model = llm_providers.build_chat_model("bedrock", "us.anthropic.claude-3-5-haiku-20241022-v1:0", "my-bearer-token")
+    assert isinstance(model, ChatBedrockConverse)
+    assert model.model_id == "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+    assert model.region_name == "us-east-1"
+    assert model.bedrock_api_key.get_secret_value() == "my-bearer-token"
+    assert model.aws_access_key_id is None
+
+
+def test_build_chat_model_bedrock_returns_chat_bedrock_converse_with_sigv4():
+    from langchain_aws import ChatBedrockConverse
+
+    store.set_setting("bedrock_region", "us-east-1")
+    model = llm_providers.build_chat_model(
+        "bedrock", "us.anthropic.claude-3-5-haiku-20241022-v1:0", "",
+        aws_access_key_id="AKIAEXAMPLE", aws_secret_access_key="secret-value",
+    )
+    assert isinstance(model, ChatBedrockConverse)
+    assert model.bedrock_api_key is None
+    assert model.aws_access_key_id.get_secret_value() == "AKIAEXAMPLE"
+    assert model.aws_secret_access_key.get_secret_value() == "secret-value"
+    # session_token não foi passado — opcional, IAM user de longa duração.
+    assert model.aws_session_token is None
+
+
+def test_build_chat_model_bedrock_api_key_takes_precedence_over_sigv4():
+    from langchain_aws import ChatBedrockConverse
+
+    store.set_setting("bedrock_region", "us-east-1")
+    model = llm_providers.build_chat_model(
+        "bedrock", "some-model", "my-bearer-token",
+        aws_access_key_id="AKIAEXAMPLE", aws_secret_access_key="secret-value",
+    )
+    assert isinstance(model, ChatBedrockConverse)
+    assert model.bedrock_api_key.get_secret_value() == "my-bearer-token"

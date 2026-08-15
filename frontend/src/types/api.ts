@@ -20,6 +20,11 @@ export interface ProjectConfig {
   ollama_timeout_seconds: string;
   custom_llm_api_key: string;
   custom_llm_base_url: string;
+  bedrock_api_key: string;
+  bedrock_region: string;
+  bedrock_access_key_id: string;
+  bedrock_secret_access_key: string;
+  bedrock_session_token: string;
   default_llm_provider: string;
   default_llm_model: string;
   retention_days: string;
