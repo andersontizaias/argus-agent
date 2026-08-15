@@ -29,6 +29,7 @@
 - [🚀 Running](#-running)
 - [🔁 LaunchAgents (start on login)](#-launchagents-start-on-login)
 - [📖 Usage](#-usage)
+  - [📱 Mobile binaries](#-mobile-binaries)
   - [📡 REST API](#-rest-api)
   - [🔌 MCP](#-mcp)
   - [🤝 A2A](#-a2a)
@@ -126,9 +127,17 @@ Or both plus the Vite dev server together, from a development checkout:
 2. In **New Run**, pick the platform (web via URL, Android/iOS via a binary), paste the BDD script and the test data.
 3. Follow along live in **Run Detail** (scenarios/steps changing state, screenshots) or via the API.
 
+### 📱 Mobile binaries
+
+`binary_url` (Android/iOS runs) accepts a real `http(s)` URL — optionally protected, set `binary_auth_secret` to the name of a secret registered in **Config** and it's sent as a Bearer token — or a local file: uploaded straight from **New Run**, or referenced by an absolute path/`file://` if it's already on the machine running Argus.
+
+- **Android**: a plain `.apk`. Only have an `.aab`? Build a universal `.apk` from it first (`bundletool build-apks --mode=universal`) — Argus doesn't install `.aab` directly.
+- **iOS**: a `.zip` containing a **Simulator build** of the `.app` (`Payload/<Name>.app/`), not a device `.ipa` — only the Simulator is supported, no physical device yet. What matters is the content, not the file extension: the `.app`'s `Info.plist` must have `iPhoneSimulator` in `CFBundleSupportedPlatforms`, so a zip named `.ipa` works fine as long as what's inside was built for the Simulator SDK. Most `.ipa`s you already have lying around (TestFlight, App Store, Ad Hoc) are device builds and get rejected with a clear error instead of failing cryptically mid-run.
+  Typical way to produce one: `xcodebuild ... -sdk iphonesimulator -derivedDataPath build` (or `fastlane gym`/`build_app` with `destination: "generic/platform=iOS Simulator"`, `skip_package_ipa: true`), then zip the result: `ditto -c -k --sequesterRsrc --keepParent build/.../YourApp.app YourApp.zip`.
+
 ### 📡 REST API
 
-`POST /api/runs` · `GET /api/runs` · `GET /api/runs/{id}` · `POST /api/runs/{id}/cancel` · `GET /api/runs/{id}/stream` (SSE) · `GET /api/runs/{id}/report[.html]` · `GET /api/runs/{id}/artifacts.zip` · `GET /api/evidences/{id}` · `GET`/`POST /api/config` · `POST /api/config/test-llm-provider/{id}` · CRUD `/api/api-keys` · `GET /api/health`.
+`POST /api/runs` · `GET /api/runs` · `GET /api/runs/{id}` · `POST /api/runs/{id}/cancel` · `GET /api/runs/{id}/stream` (SSE) · `GET /api/runs/{id}/report[.html]` · `GET /api/runs/{id}/artifacts.zip` · `GET /api/evidences/{id}` · `POST /api/binaries/upload` · `GET`/`POST /api/config` · `POST /api/config/test-llm-provider/{id}` · CRUD `/api/api-keys` · `GET /api/health`.
 
 Auth via `X-API-Key: argus_<prefix>_<random>` (shown once on creation). Typical CI flow: `POST /api/runs` → poll/SSE → exit code from the final `status` → download `report.json`.
 
@@ -148,7 +157,7 @@ AgentCard at `/.well-known/agent-card.json`, route `/a2a`. Skill `execute_qa_tes
 
 Environment variables (`.env`, see [`.env.example`](./.env.example)): `ARGUS_SECRET_KEY` (Fernet key — encrypts credentials at rest), `ARGUS_DB_PATH`, `ARGUS_ARTIFACTS_DIR`, `ARGUS_UPLOADS_DIR`, `ARGUS_HOST`/`ARGUS_PORT`, `ARGUS_REQUIRE_API_KEY`, `APPIUM_BASE_PORT`, `ARGUS_ANDROID_AVD`/`ARGUS_ANDROID_EMULATOR_PORT`, `ARGUS_IOS_DEVICE`.
 
-LLM provider, binary-source secrets and report retention (`retention_days`, 30 days by default — `0` disables pruning) live in `/api/config`, editable from the UI.
+LLM providers, binary-source secrets and report retention (`retention_days`, 30 days by default — `0` disables pruning) live in `/api/config`, editable from the UI. Each provider keeps its own API key and default model side by side (picking a "default provider" doesn't make you lose the model you had configured for another one); AWS Bedrock additionally accepts either a bearer API key (short- or long-lived) or classic IAM access key/secret/session-token credentials.
 
 ## 📊 Reports
 
@@ -161,7 +170,7 @@ uv run pytest --cov
 cd frontend && npm run test:coverage
 ```
 
-CI (`ci.yml`) runs ruff, mypy, pytest (coverage ≥90%), complexity (`xenon`), duplication (`jscpd`), security (`pip-audit`, `npm audit`, gitleaks) and the frontend build+tests. Releases (`release.yml`) trigger on `v*` tags, publishing the tarball + `install.sh` to the GitHub Release.
+CI (`ci.yml`) runs ruff, mypy, pytest (coverage ≥90%), complexity (`xenon`), duplication (`jscpd`), security (`pip-audit`, `npm audit`, gitleaks) and the frontend build+tests (coverage ≥90% too). Releases (`release.yml`) trigger on merges into `main` — it reads the version straight from `pyproject.toml` and only publishes if that version doesn't have a tag yet, so a merge without a version bump is a no-op. Publishes the tarball + `install.sh` and, on a separate macOS job, the `.dmg` installer, to the GitHub Release. See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full branch → release flow.
 
 ## 🌱 Contributing
 
