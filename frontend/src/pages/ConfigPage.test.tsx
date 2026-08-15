@@ -17,7 +17,6 @@ const BASE_CONFIG = {
   custom_llm_api_key: '',
   custom_llm_base_url: '',
   default_llm_provider: '',
-  default_llm_model: '',
 };
 
 const BASE_HEALTH = { status: 'ok', checks: [{ name: 'database', ok: true, detail: 'SQLite ok' }] };
@@ -119,13 +118,56 @@ describe('ConfigPage', () => {
     await user.type(baseUrlInputs[0], 'http://localhost:11434');
     expect(baseUrlInputs[0]).toHaveValue('http://localhost:11434');
 
-    const providerInput = screen.getByPlaceholderText('anthropic');
-    await user.type(providerInput, 'anthropic');
-    expect(providerInput).toHaveValue('anthropic');
+    // Provider default é um <select> restrito aos providers configurados —
+    // habilita a opção "anthropic" assim que a chave é digitada (acima).
+    const providerSelect = screen.getByLabelText<HTMLSelectElement>('Provider default');
+    await waitFor(() => expect(providerSelect.querySelector('option[value="anthropic"]')).not.toBeDisabled());
+    await user.selectOptions(providerSelect, 'anthropic');
+    expect(providerSelect).toHaveValue('anthropic');
 
+    // Modelo agora é um campo por provider, dentro do bloco do Anthropic.
     const modelInput = screen.getByPlaceholderText('claude-3-5-haiku-latest');
     await user.type(modelInput, 'claude-3-5-haiku-latest');
     expect(modelInput).toHaveValue('claude-3-5-haiku-latest');
+  });
+
+  it('provider default select only enables providers that are already configured', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((path: string) => {
+        if (path === '/api/config') return Promise.resolve(jsonResponse({ ...BASE_CONFIG, anthropic_api_key: 'sk-a****5678' }));
+        if (path === '/api/health') return Promise.resolve(jsonResponse(BASE_HEALTH));
+        return Promise.resolve(jsonResponse({}));
+      })
+    );
+    renderWithProviders(<ConfigPage />);
+
+    const select = await screen.findByLabelText<HTMLSelectElement>('Provider default');
+    await waitFor(() => expect(select.querySelector('option[value="anthropic"]')).not.toBeDisabled());
+    expect(select.querySelector('option[value="openai"]')).toBeDisabled();
+    expect(select.querySelector('option[value="groq"]')).toBeDisabled();
+  });
+
+  it('keeps each provider\'s model field independent', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((path: string) => {
+        if (path === '/api/config') return Promise.resolve(jsonResponse(BASE_CONFIG));
+        if (path === '/api/health') return Promise.resolve(jsonResponse(BASE_HEALTH));
+        return Promise.resolve(jsonResponse({}));
+      })
+    );
+    renderWithProviders(<ConfigPage />);
+
+    const anthropicModel = await screen.findByPlaceholderText('claude-3-5-haiku-latest');
+    const groqModel = screen.getByPlaceholderText('llama-3.3-70b-versatile');
+
+    await user.type(anthropicModel, 'claude-opus-4');
+    await user.type(groqModel, 'llama-3.3-8b-instant');
+
+    expect(anthropicModel).toHaveValue('claude-opus-4');
+    expect(groqModel).toHaveValue('llama-3.3-8b-instant');
   });
 
   it('shows the Bedrock API key + region fields by default, with the SigV4 fields collapsed', async () => {
