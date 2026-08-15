@@ -164,14 +164,24 @@ jobs:
   # `gh pr merge --auto` habilita o auto-merge nativo do GitHub: ele só
   # efetiva o merge quando os status checks obrigatórios da branch
   # protection de `main` reportarem sucesso — como já reportaram (mesma
-  # SHA), o merge acontece de imediato, sem esperar um clique manual. O
-  # push resultante em `main` já dispara o Release (release.yml, gatilho
-  # `on: push: branches: [main]`) sozinho — nenhum outro gatilho de CD
-  # precisa ser adicionado aqui. Requer "Allow auto-merge" habilitado nas
-  # Settings do repositório (Settings → General → Pull Requests) — sem
-  # isso, `gh pr merge --auto` falha explicitamente (não faz merge direto
-  # como fallback), então o pior caso é "nenhum release automático", nunca
-  # um merge sem os checks passarem.
+  # SHA), o merge acontece de imediato, sem esperar um clique manual.
+  # Requer "Allow auto-merge" habilitado nas Settings do repositório
+  # (Settings → General → Pull Requests) — sem isso, `gh pr merge --auto`
+  # falha explicitamente (não faz merge direto como fallback), então o
+  # pior caso é "nenhum release automático", nunca um merge sem os checks
+  # passarem.
+  #
+  # IMPORTANTE (achado ao vivo, não é teórico): o push resultante em
+  # `main` NÃO dispara o Release sozinho — commits cujo autor é
+  # `github-actions[bot]` (o merge feito com GITHUB_TOKEN, mesmo via
+  # auto-merge) não cascateiam pra outros workflow runs via `on: push`,
+  # restrição de segurança do próprio GitHub contra loop infinito de
+  # Actions disparando Actions. Confirmado: PR #18 mergeou sozinho, `main`
+  # avançou, e nenhum run de CI nem de Release apareceu pra essa SHA. Por
+  # isso a etapa abaixo espera o merge de verdade acontecer e dispara o
+  # Release explicitamente via `workflow_dispatch` (que release.yml já
+  # aceita) — esse SIM funciona com GITHUB_TOKEN, é um disparo deliberado
+  # via API, não um evento em cascata.
   open-pr-to-main:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     needs:
@@ -180,6 +190,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      actions: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -208,12 +219,32 @@ jobs:
           # vivo: falhou nos primeiros ~7s, um retry manual 30s depois
           # funcionou de primeira) — retry com backoff em vez de falhar o
           # job à toa nessa janela transitória.
+          enabled=""
           for attempt in 1 2 3 4 5 6; do
             if gh pr merge "${pr}" --repo "${GITHUB_REPOSITORY}" --merge --auto; then
-              exit 0
+              enabled=1
+              break
             fi
             echo "Tentativa ${attempt}/6 de habilitar auto-merge falhou — tentando de novo em 10s."
             sleep 10
           done
-          echo "Não deu pra habilitar auto-merge no PR #${pr} depois de 6 tentativas — merge manual."
+          if [ -z "${enabled}" ]; then
+            echo "Não deu pra habilitar auto-merge no PR #${pr} depois de 6 tentativas — merge manual."
+            exit 1
+          fi
+
+          # Espera o merge de verdade acontecer (checks já estavam verdes
+          # nessa SHA, então costuma ser questão de segundos) e dispara o
+          # Release explicitamente — ver comentário no topo do job pra
+          # entender por quê o push em si não basta.
+          for attempt in $(seq 1 18); do
+            state=$(gh pr view "${pr}" --repo "${GITHUB_REPOSITORY}" --json state --jq '.state')
+            if [ "${state}" = "MERGED" ]; then
+              echo "PR #${pr} mergeado — disparando o Release em main."
+              gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref main
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "PR #${pr} não mergeou em 3min mesmo com auto-merge habilitado — Release não disparado automaticamente, precisa checar manualmente."
           exit 1
