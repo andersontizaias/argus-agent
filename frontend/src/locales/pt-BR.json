@@ -26,6 +26,8 @@
     "notConfigured": "Não configurado",
     "testOk": "Conexão ok",
     "testFail": "Falha na conexão",
+    "showAdvanced": "Mostrar campos avançados",
+    "hideAdvanced": "Esconder campos avançados",
     "apiKeys": "Chaves de API (CI/CD)",
     "apiKeysHelp": "Chaves de máquina para automações (CI/CD, MCP, A2A) chamarem a API do Argus com o header X-API-Key.",
     "apiKeysEmpty": "Nenhuma chave criada ainda.",
