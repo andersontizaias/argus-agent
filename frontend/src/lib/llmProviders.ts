@@ -25,10 +25,15 @@ export interface LlmProviderMeta {
   helpText?: string;
   timeoutField?: keyof ProjectConfig;
   // Sem prefixo do provider — só o nome do modelo, espelha
-  // ProviderInfo.example_model em src/llm_providers.py. Usado como sugestão
-  // ao escolher o provider na Nova Execução (não existe, hoje, uma lista de
-  // modelos "cadastrados" por provider — só um default global).
+  // ProviderInfo.example_model em src/llm_providers.py. Usado como
+  // placeholder do campo de modelo abaixo quando o provider ainda não tem
+  // um configurado.
   exampleModel: string;
+  // Modelo default DESSE provider — um campo por provider (não um único
+  // global), espelha `default_model_setting_name` em src/llm_providers.py.
+  // Cadastrado junto com a chave/URL na ConfigPage; usado como sugestão ao
+  // escolher esse provider na Nova Execução.
+  defaultModelField: keyof ProjectConfig;
   // Campos escondidos atrás de um botão "Mostrar avançado" — hoje só o
   // Bedrock usa (modo SigV4 alternativo à API key). Genérico o bastante
   // pra outro provider futuro com o mesmo padrão "modo simples + avançado".
@@ -36,21 +41,34 @@ export interface LlmProviderMeta {
 }
 
 export const LLM_PROVIDERS: LlmProviderMeta[] = [
-  { id: 'anthropic', label: 'Anthropic', apiKeyField: 'anthropic_api_key', needsApiKey: true, exampleModel: 'claude-3-5-haiku-latest' },
-  { id: 'openai', label: 'OpenAI', apiKeyField: 'openai_api_key', needsApiKey: true, exampleModel: 'gpt-4o-mini' },
-  { id: 'google_genai', label: 'Google Gemini', apiKeyField: 'gemini_api_key', needsApiKey: true, exampleModel: 'gemini-2.5-flash' },
-  { id: 'groq', label: 'Groq', apiKeyField: 'groq_api_key', needsApiKey: true, exampleModel: 'llama-3.3-70b-versatile' },
+  {
+    id: 'anthropic', label: 'Anthropic', apiKeyField: 'anthropic_api_key', needsApiKey: true,
+    exampleModel: 'claude-3-5-haiku-latest', defaultModelField: 'anthropic_default_model',
+  },
+  {
+    id: 'openai', label: 'OpenAI', apiKeyField: 'openai_api_key', needsApiKey: true,
+    exampleModel: 'gpt-4o-mini', defaultModelField: 'openai_default_model',
+  },
+  {
+    id: 'google_genai', label: 'Google Gemini', apiKeyField: 'gemini_api_key', needsApiKey: true,
+    exampleModel: 'gemini-2.5-flash', defaultModelField: 'gemini_default_model',
+  },
+  {
+    id: 'groq', label: 'Groq', apiKeyField: 'groq_api_key', needsApiKey: true,
+    exampleModel: 'llama-3.3-70b-versatile', defaultModelField: 'groq_default_model',
+  },
   {
     id: 'ollama', label: 'Ollama (local ou remoto)', apiKeyField: 'ollama_api_key', needsApiKey: false,
     needsBaseUrl: true, baseUrlField: 'ollama_base_url',
     baseUrlPlaceholder: 'http://localhost:11434 ou http://<host-remoto>:11434',
     helpText: 'A chave de API é opcional — só necessária se o servidor Ollama estiver atrás de um proxy com autenticação (Bearer token).',
     timeoutField: 'ollama_timeout_seconds',
-    exampleModel: 'qwen2.5:14b',
+    exampleModel: 'qwen2.5:14b', defaultModelField: 'ollama_default_model',
   },
   {
     id: 'custom', label: 'Custom (compatível com OpenAI)', apiKeyField: 'custom_llm_api_key', needsApiKey: true,
     needsBaseUrl: true, baseUrlField: 'custom_llm_base_url', exampleModel: '',
+    defaultModelField: 'custom_llm_default_model',
   },
   {
     id: 'bedrock', label: 'AWS Bedrock', apiKeyField: 'bedrock_api_key', needsApiKey: false,
@@ -61,7 +79,7 @@ export const LLM_PROVIDERS: LlmProviderMeta[] = [
       { field: 'bedrock_secret_access_key', label: 'AWS Secret Access Key', type: 'password', required: true },
       { field: 'bedrock_session_token', label: 'AWS Session Token (opcional — só para credenciais temporárias/STS)', type: 'password' },
     ],
-    exampleModel: 'us.anthropic.claude-3-5-haiku-20241022-v1:0',
+    exampleModel: 'us.anthropic.claude-3-5-haiku-20241022-v1:0', defaultModelField: 'bedrock_default_model',
   },
 ];
 

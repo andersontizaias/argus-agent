@@ -10,7 +10,7 @@ from google.protobuf.struct_pb2 import Struct, Value
 from src import a2a_server as a2a_module
 from src import store
 from src.a2a_server import ArgusAgentExecutor, _extract_run_params, build_agent_card
-from src.llm_providers import SUPPORTED_PROVIDERS
+from src.llm_providers import SUPPORTED_PROVIDERS, default_model_setting_name
 from src.user_secrets import set_secret_plain
 
 pytestmark = pytest.mark.anyio
@@ -23,7 +23,7 @@ def configured_provider():
     provider = SUPPORTED_PROVIDERS[0]
     set_secret_plain(provider.secret_name, "sk-fake-key-not-used")
     store.set_setting("default_llm_provider", provider.id)
-    store.set_setting("default_llm_model", provider.example_model)
+    store.set_setting(default_model_setting_name(provider), provider.example_model)
     return provider
 
 

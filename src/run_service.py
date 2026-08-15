@@ -11,7 +11,7 @@ from pathlib import Path
 
 from src import models, store
 from src.bdd import BddParseError, parse_bdd_script, validate_test_data
-from src.llm_providers import get_provider
+from src.llm_providers import default_model_setting_name, get_provider
 
 TERMINAL_STATUSES = {"passed", "failed", "error", "canceled"}
 VALID_PLATFORMS = {"web", "android", "ios"}
@@ -53,9 +53,13 @@ def create_run(
         raise RunServiceError(str(e)) from e
 
     resolved_provider = llm_provider or store.get_setting("default_llm_provider")
-    resolved_model = llm_model or store.get_setting("default_llm_model")
-    if not resolved_provider or not get_provider(resolved_provider):
+    provider = get_provider(resolved_provider) if resolved_provider else None
+    if not provider:
         raise RunServiceError("No LLM provider configured (set a default in /config or pass llm_provider).")
+    # O modelo é um setting por provider (cada provider configurado guarda
+    # o seu preferido) — não um único global, senão trocar de provider
+    # default perderia o modelo configurado dos outros.
+    resolved_model = llm_model or store.get_setting(default_model_setting_name(provider))
 
     return store.create_run(
         platform=platform,

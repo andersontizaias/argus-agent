@@ -17,12 +17,15 @@ function jsonResponse(body: unknown, status = 200) {
 
 function fakeConfig(overrides: Partial<ProjectConfig> = {}): ProjectConfig {
   return {
-    anthropic_api_key: '', openai_api_key: '', gemini_api_key: '', groq_api_key: '',
-    ollama_api_key: '', ollama_base_url: '', ollama_timeout_seconds: '',
-    custom_llm_api_key: '', custom_llm_base_url: '',
+    anthropic_api_key: '', anthropic_default_model: '',
+    openai_api_key: '', openai_default_model: '',
+    gemini_api_key: '', gemini_default_model: '',
+    groq_api_key: '', groq_default_model: '',
+    ollama_api_key: '', ollama_base_url: '', ollama_timeout_seconds: '', ollama_default_model: '',
+    custom_llm_api_key: '', custom_llm_base_url: '', custom_llm_default_model: '',
     bedrock_api_key: '', bedrock_region: '', bedrock_access_key_id: '',
-    bedrock_secret_access_key: '', bedrock_session_token: '',
-    default_llm_provider: '', default_llm_model: '', retention_days: '30',
+    bedrock_secret_access_key: '', bedrock_session_token: '', bedrock_default_model: '',
+    default_llm_provider: '', retention_days: '30',
     ...overrides,
   };
 }
@@ -212,7 +215,7 @@ describe('NewRunPage', () => {
     stubFetchWithConfig(fakeConfig({
       anthropic_api_key: 'sk-a****',
       default_llm_provider: 'anthropic',
-      default_llm_model: 'claude-3-5-haiku-latest',
+      anthropic_default_model: 'claude-3-5-haiku-latest',
     }));
     renderWithProviders(<NewRunPage />);
 
@@ -223,13 +226,13 @@ describe('NewRunPage', () => {
     expect(screen.getByLabelText('Modelo default')).toHaveValue('claude-3-5-haiku-latest');
   });
 
-  it('auto-fills the model field with an example when picking a configured non-default provider', async () => {
+  it('auto-fills the model field with an example when the picked provider has no model configured', async () => {
     const user = userEvent.setup();
     stubFetchWithConfig(fakeConfig({
       anthropic_api_key: 'sk-a****',
       groq_api_key: 'gsk_****',
       default_llm_provider: 'anthropic',
-      default_llm_model: 'claude-3-5-haiku-latest',
+      anthropic_default_model: 'claude-3-5-haiku-latest',
     }));
     renderWithProviders(<NewRunPage />);
 
@@ -238,5 +241,27 @@ describe('NewRunPage', () => {
     await user.selectOptions(select, 'groq');
 
     expect(screen.getByLabelText('Modelo default')).toHaveValue('llama-3.3-70b-versatile');
+  });
+
+  it('auto-fills the model field with that provider\'s own configured model, even when it is not the global default', async () => {
+    // Regressão: antes, o prefill só usava o modelo salvo se o provider
+    // escolhido fosse o "provider default" global — trocar pra outro
+    // provider configurado sempre caía no exemplo hardcoded, ignorando um
+    // modelo que a pessoa já tinha configurado pra ele.
+    const user = userEvent.setup();
+    stubFetchWithConfig(fakeConfig({
+      anthropic_api_key: 'sk-a****',
+      groq_api_key: 'gsk_****',
+      default_llm_provider: 'anthropic',
+      anthropic_default_model: 'claude-3-5-haiku-latest',
+      groq_default_model: 'llama-3.3-8b-instant',
+    }));
+    renderWithProviders(<NewRunPage />);
+
+    const select = await screen.findByLabelText<HTMLSelectElement>('Provider default');
+    await waitFor(() => expect(select.querySelector('option[value="groq"]')).not.toBeDisabled());
+    await user.selectOptions(select, 'groq');
+
+    expect(screen.getByLabelText('Modelo default')).toHaveValue('llama-3.3-8b-instant');
   });
 });

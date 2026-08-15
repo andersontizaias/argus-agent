@@ -9,7 +9,7 @@ import json
 import pytest
 
 from src import run_service, store
-from src.llm_providers import SUPPORTED_PROVIDERS
+from src.llm_providers import SUPPORTED_PROVIDERS, default_model_setting_name
 from src.user_secrets import set_secret_plain
 
 VALID_BDD = "# language: pt\nFuncionalidade: X\n  Cenario: Y\n    Dado algo\n"
@@ -20,7 +20,7 @@ def configured_provider():
     provider = SUPPORTED_PROVIDERS[0]
     set_secret_plain(provider.secret_name, "sk-fake-key-not-used")
     store.set_setting("default_llm_provider", provider.id)
-    store.set_setting("default_llm_model", provider.example_model)
+    store.set_setting(default_model_setting_name(provider), provider.example_model)
     return provider
 
 

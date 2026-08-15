@@ -20,6 +20,8 @@
     "saved": "Configuração salva com sucesso.",
     "defaultProvider": "Provider default",
     "defaultModel": "Modelo default",
+    "noDefaultProvider": "Nenhum",
+    "model": "Modelo",
     "apiKey": "Chave de API",
     "baseUrl": "Base URL",
     "timeoutSeconds": "Timeout (segundos)",

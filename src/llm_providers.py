@@ -86,6 +86,19 @@ def get_provider(provider_id: str) -> ProviderInfo | None:
     return next((p for p in SUPPORTED_PROVIDERS if p.id == provider_id), None)
 
 
+def default_model_setting_name(provider: ProviderInfo) -> str:
+    """Nome do setting que guarda o modelo default DESSE provider — um por
+    provider (ex.: "anthropic_default_model"), não um único global, porque
+    cada provider configurado pode ter um modelo preferido diferente (e
+    trocar de provider default não deveria fazer perder o modelo dos
+    outros). Deriva de `secret_name` (todo provider termina em "_api_key")
+    em vez de `provider.id` porque os dois já divergem pra alguns
+    (secret_name="gemini_api_key" pro provider "google_genai",
+    "custom_llm_api_key" pro provider "custom") — reaproveitar o prefixo já
+    escolhido evita um segundo nome pra decorar por provider."""
+    return provider.secret_name.removesuffix("_api_key") + "_default_model"
+
+
 def is_provider_configured(provider_id: str) -> bool:
     provider = get_provider(provider_id)
     if not provider:

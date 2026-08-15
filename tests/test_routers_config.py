@@ -21,7 +21,6 @@ def test_save_and_mask_secret_roundtrip():
         resp = client.post("/api/config", json={
             "anthropic_api_key": "sk-ant-abcdefgh12345678",
             "default_llm_provider": "anthropic",
-            "default_llm_model": "claude-3-5-haiku-latest",
         })
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
@@ -35,11 +34,27 @@ def test_save_and_mask_secret_roundtrip():
         resp = client.post("/api/config", json={
             "anthropic_api_key": body["anthropic_api_key"],
             "default_llm_provider": "anthropic",
-            "default_llm_model": "claude-3-5-haiku-latest",
         })
         assert resp.status_code == 200
         resp = client.get("/api/config")
         assert resp.json()["anthropic_api_key"] == "sk-a****5678"
+
+
+def test_save_and_retrieve_default_model_per_provider():
+    # Modelo default é por provider, não um único global — configurar o do
+    # Anthropic não deveria afetar o do Groq (e vice-versa).
+    with _client() as client:
+        resp = client.post("/api/config", json={
+            "anthropic_default_model": "claude-3-5-haiku-latest",
+            "groq_default_model": "llama-3.3-70b-versatile",
+        })
+        assert resp.status_code == 200
+
+        resp = client.get("/api/config")
+        body = resp.json()
+        assert body["anthropic_default_model"] == "claude-3-5-haiku-latest"
+        assert body["groq_default_model"] == "llama-3.3-70b-versatile"
+        assert body["openai_default_model"] == ""
 
 
 def test_short_secret_masked_fully():
@@ -79,6 +94,47 @@ def test_save_base_urls_and_settings():
     body = resp.json()
     assert body["ollama_base_url"] == "http://localhost:11434"
     assert body["custom_llm_base_url"] == "http://localhost:8080/v1"
+
+
+def test_partial_post_does_not_wipe_settings_omitted_from_the_body():
+    # Bug real visto ao vivo: um POST /api/config com corpo {} (ou qualquer
+    # corpo que não mande TODOS os campos — normal pra um caller de API que
+    # não é a própria UI, que sempre reenvia o estado inteiro da tela)
+    # resetava pra "" todo setting que não veio, silenciosamente. Campo
+    # OMITIDO não deveria mexer no que já tava salvo — só um valor
+    # explícito (mesmo "") deveria.
+    with _client() as client:
+        client.post("/api/config", json={
+            "ollama_base_url": "https://ollama.example.com/",
+            "bedrock_region": "us-east-1",
+            "default_llm_provider": "ollama",
+            "retention_days": "45",
+        })
+
+        resp = client.post("/api/config", json={})
+        assert resp.status_code == 200
+
+        resp = client.get("/api/config")
+    body = resp.json()
+    assert body["ollama_base_url"] == "https://ollama.example.com/"
+    assert body["bedrock_region"] == "us-east-1"
+    assert body["default_llm_provider"] == "ollama"
+    assert body["retention_days"] == "45"
+
+
+def test_explicit_empty_string_still_clears_a_setting():
+    # Diferente do caso acima: um valor vazio EXPLÍCITO (o campo veio no
+    # corpo, só que vazio) continua limpando o setting — é assim que a UI
+    # limpa o "Provider default" (opção "Nenhum" no <select>). Só a
+    # AUSÊNCIA do campo deveria ser ignorada, nunca "" mandado de propósito.
+    with _client() as client:
+        client.post("/api/config", json={"default_llm_provider": "ollama"})
+
+        resp = client.post("/api/config", json={"default_llm_provider": ""})
+        assert resp.status_code == 200
+
+        resp = client.get("/api/config")
+    assert resp.json()["default_llm_provider"] == ""
 
 
 def test_save_and_retrieve_ollama_timeout_seconds():
@@ -185,11 +241,12 @@ def test_test_llm_provider_success(monkeypatch):
     assert body["provider"] == "anthropic"
 
 
-def test_test_llm_provider_uses_configured_default_model_for_matching_provider(monkeypatch):
+def test_test_llm_provider_uses_that_providers_configured_default_model(monkeypatch):
     # Regressão: testar sempre com o example_model fixo (ex.: "qwen2.5:14b"
     # pro Ollama) dá 404 "model not found" se esse modelo específico nunca
     # foi baixado no servidor do usuário — o teste deve usar o modelo que a
-    # pessoa realmente configurou como default pra esse provider.
+    # pessoa configurou como default PRA ESSE PROVIDER (não precisa ser o
+    # "provider default" global).
     captured_models = []
 
     class _FakeModel:
@@ -205,8 +262,7 @@ def test_test_llm_provider_uses_configured_default_model_for_matching_provider(m
     with _client() as client:
         client.post("/api/config", json={
             "ollama_base_url": "http://localhost:11434",
-            "default_llm_provider": "ollama",
-            "default_llm_model": "meu-modelo-baixado-localmente",
+            "ollama_default_model": "meu-modelo-baixado-localmente",
         })
         resp = client.post("/api/config/test-llm-provider/ollama")
 
@@ -225,8 +281,7 @@ def test_test_llm_provider_ignores_default_model_of_a_different_provider(monkeyp
     with _client() as client:
         client.post("/api/config", json={
             "anthropic_api_key": "sk-ant-abcdefgh12345678",
-            "default_llm_provider": "openai",  # não é o provider sendo testado
-            "default_llm_model": "gpt-5-nano",
+            "openai_default_model": "gpt-5-nano",  # não é o provider sendo testado
         })
         resp = client.post("/api/config/test-llm-provider/anthropic")
 
