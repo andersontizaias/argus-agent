@@ -149,7 +149,8 @@ jobs:
           name: sbom
           path: sbom.spdx.json
 
-  # ─── Abre o PR develop -> main depois que develop passa verde ──────
+  # ─── Abre (e auto-mergeia) o PR develop -> main depois que develop
+  # passa verde ─────────────────────────────────────────────────────
   # Só roda em push direto a develop (ou seja, depois que um PR de feature
   # já foi mergeado nela) e só depois que todos os outros jobs passaram
   # (comportamento padrão do `needs`: se algum falhar, este é pulado). O
@@ -159,19 +160,31 @@ jobs:
   # re-disparar CI (ele não dispara — eventos de PR abertos por
   # GITHUB_TOKEN não cascateiam novos workflow runs, mas os checks da SHA
   # já são reaproveitados pela branch protection do GitHub).
+  #
+  # `gh pr merge --auto` habilita o auto-merge nativo do GitHub: ele só
+  # efetiva o merge quando os status checks obrigatórios da branch
+  # protection de `main` reportarem sucesso — como já reportaram (mesma
+  # SHA), o merge acontece de imediato, sem esperar um clique manual. O
+  # push resultante em `main` já dispara o Release (release.yml, gatilho
+  # `on: push: branches: [main]`) sozinho — nenhum outro gatilho de CD
+  # precisa ser adicionado aqui. Requer "Allow auto-merge" habilitado nas
+  # Settings do repositório (Settings → General → Pull Requests) — sem
+  # isso, `gh pr merge --auto` falha explicitamente (não faz merge direto
+  # como fallback), então o pior caso é "nenhum release automático", nunca
+  # um merge sem os checks passarem.
   open-pr-to-main:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     needs:
       [backend-tests, backend-lint, frontend-tests, complexity, duplication, sca-python, sca-frontend, gitleaks, sbom]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Abre PR develop -> main (se houver diferença e nenhum já aberto)
+      - name: Abre (ou reaproveita) o PR develop -> main e habilita auto-merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -181,10 +194,12 @@ jobs:
             exit 0
           fi
           existing=$(gh pr list --repo "${GITHUB_REPOSITORY}" --base main --head develop --state open --json number --jq '.[0].number // empty')
-          if [ -n "${existing}" ]; then
-            echo "Já existe PR aberto (#${existing}) develop -> main."
-            exit 0
+          if [ -z "${existing}" ]; then
+            gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head develop \
+              --title "Release: develop -> main" \
+              --body "PR automático aberto pelo CI depois que \`develop\` passou verde. Merge automático assim que os checks liberarem (branch protection de \`main\` exige os mesmos gates, já satisfeitos por essa SHA) — dispara o release sozinho, sem precisar de clique manual."
+          else
+            echo "Já existe PR aberto (#${existing}) develop -> main — garantindo que o auto-merge está habilitado."
           fi
-          gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head develop \
-            --title "Release: develop -> main" \
-            --body "PR automático aberto pelo CI depois que \`develop\` passou verde. Revise e mergeie pra disparar o release em \`main\`."
+          pr=$(gh pr list --repo "${GITHUB_REPOSITORY}" --base main --head develop --state open --json number --jq '.[0].number')
+          gh pr merge "${pr}" --repo "${GITHUB_REPOSITORY}" --merge --auto
