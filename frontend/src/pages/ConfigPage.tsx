@@ -91,6 +91,19 @@ export function ConfigPage() {
 
   const [values, setValues] = useState<Partial<ProjectConfig>>({});
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
+  // Provider ids com o bloco de campos avançados (ex.: Bedrock/SigV4) aberto
+  // — recolhido por padrão, pra manter o fluxo padrão tão simples quanto o
+  // dos outros providers.
+  const [expandedAdvanced, setExpandedAdvanced] = useState<Set<string>>(new Set());
+
+  function toggleAdvanced(providerId: string) {
+    setExpandedAdvanced((prev) => {
+      const next = new Set(prev);
+      if (next.has(providerId)) next.delete(providerId);
+      else next.add(providerId);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (config) setValues(config);
@@ -193,6 +206,28 @@ export function ConfigPage() {
                 </Button>
               </div>
               {provider.helpText && <p className="text-xs text-muted-foreground">{provider.helpText}</p>}
+              {provider.advancedFields && (
+                <div className="space-y-2">
+                  <Button variant="ghost" size="sm" onClick={() => toggleAdvanced(provider.id)} className="h-auto px-0 text-xs text-muted-foreground hover:bg-transparent">
+                    {expandedAdvanced.has(provider.id) ? t('config.hideAdvanced') : t('config.showAdvanced')}
+                  </Button>
+                  {expandedAdvanced.has(provider.id) && (
+                    <div className="space-y-2 rounded-md border border-border p-3">
+                      {provider.advancedFields.map((advField) => (
+                        <div key={String(advField.field)} className="space-y-1">
+                          <Label htmlFor={advField.field} className="text-xs font-normal text-muted-foreground">{advField.label}</Label>
+                          <Input
+                            id={advField.field}
+                            type={advField.type ?? 'text'}
+                            value={field(advField.field)}
+                            onChange={(e) => setField(advField.field, e.target.value)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               {testResults[provider.id] && (
                 <p className={testResults[provider.id].ok ? 'text-sm text-[hsl(var(--good))]' : 'text-sm text-destructive'}>
                   {testResults[provider.id].message}

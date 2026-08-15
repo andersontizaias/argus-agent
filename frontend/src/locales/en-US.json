@@ -26,6 +26,8 @@
     "notConfigured": "Not configured",
     "testOk": "Connection ok",
     "testFail": "Connection failed",
+    "showAdvanced": "Show advanced fields",
+    "hideAdvanced": "Hide advanced fields",
     "apiKeys": "API Keys (CI/CD)",
     "apiKeysHelp": "Machine keys for automations (CI/CD, MCP, A2A) to call the Argus API with the X-API-Key header.",
     "apiKeysEmpty": "No keys created yet.",

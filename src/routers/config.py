@@ -36,6 +36,9 @@ def _preserve_masked(new_value: str, existing_value: str) -> str:
     return new_value
 
 
+_BEDROCK_ADVANCED_SECRET_NAMES = ("bedrock_access_key_id", "bedrock_secret_access_key", "bedrock_session_token")
+
+
 @router.get("/api/config")
 async def get_config():
     # Não filtra por `needs_api_key`: esse flag é sobre o provider EXIGIR
@@ -44,10 +47,14 @@ async def get_config():
     # de um reverse proxy na frente do servidor), e um `if p.needs_api_key`
     # aqui os excluía silenciosamente da resposta.
     secrets = {p.secret_name: _mask_secret(user_secrets.get_secret_plain(p.secret_name)) for p in SUPPORTED_PROVIDERS}
+    # Bedrock tem 3 secrets extras (modo avançado, SigV4) que não são
+    # `secret_name` de nenhum provider — o loop acima não os cobre.
+    secrets.update({name: _mask_secret(user_secrets.get_secret_plain(name)) for name in _BEDROCK_ADVANCED_SECRET_NAMES})
     settings = {
         "ollama_base_url": store.get_setting("ollama_base_url"),
         "ollama_timeout_seconds": store.get_setting("ollama_timeout_seconds"),
         "custom_llm_base_url": store.get_setting("custom_llm_base_url"),
+        "bedrock_region": store.get_setting("bedrock_region"),
         "default_llm_provider": store.get_setting("default_llm_provider"),
         "default_llm_model": store.get_setting("default_llm_model"),
         "retention_days": store.get_setting("retention_days") or str(prune.DEFAULT_RETENTION_DAYS),
@@ -65,6 +72,11 @@ class ConfigUpdate(BaseModel):
     ollama_timeout_seconds: str = ""
     custom_llm_api_key: str = ""
     custom_llm_base_url: str = ""
+    bedrock_api_key: str = ""
+    bedrock_access_key_id: str = ""
+    bedrock_secret_access_key: str = ""
+    bedrock_session_token: str = ""
+    bedrock_region: str = ""
     default_llm_provider: str = ""
     default_llm_model: str = ""
     retention_days: str = ""
@@ -86,9 +98,17 @@ async def save_config(update: ConfigUpdate):
         existing = user_secrets.get_secret_plain(provider.secret_name)
         user_secrets.set_secret_plain(provider.secret_name, _preserve_masked(new_value, existing))
 
+    # Mesmo tratamento pros 3 secrets avançados do Bedrock (fora do loop
+    # genérico acima — nenhum é `secret_name` de provider nenhum).
+    for name in _BEDROCK_ADVANCED_SECRET_NAMES:
+        new_value = getattr(update, name, "")
+        existing = user_secrets.get_secret_plain(name)
+        user_secrets.set_secret_plain(name, _preserve_masked(new_value, existing))
+
     store.set_setting("ollama_base_url", update.ollama_base_url)
     store.set_setting("ollama_timeout_seconds", update.ollama_timeout_seconds)
     store.set_setting("custom_llm_base_url", update.custom_llm_base_url)
+    store.set_setting("bedrock_region", update.bedrock_region)
     store.set_setting("default_llm_provider", update.default_llm_provider)
     store.set_setting("default_llm_model", update.default_llm_model)
     store.set_setting("retention_days", update.retention_days)
@@ -126,7 +146,10 @@ async def test_llm_provider(provider_id: str):
 
     try:
         api_key = user_secrets.get_secret_plain(provider.secret_name)
-        model = build_chat_model(provider_id, test_model, api_key, max_tokens=5, timeout=test_timeout)
+        # Bedrock tem um modo avançado (SigV4) além da API key — mesma
+        # lógica do call site em src/agent/nodes.py.
+        extra_credentials = user_secrets.get_bedrock_sigv4_credentials() if provider.id == "bedrock" else user_secrets.NO_EXTRA_CREDENTIALS
+        model = build_chat_model(provider_id, test_model, api_key, max_tokens=5, timeout=test_timeout, **extra_credentials)
         # .invoke é síncrono — rodar direto travaria o event loop inteiro
         # (outras requisições) até o provider responder, especialmente ruim
         # pra um Ollama remoto/lento (ver DEFAULT_OLLAMA_TIMEOUT_SECONDS).

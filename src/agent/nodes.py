@@ -52,7 +52,11 @@ from src.tools.device_android import EmulatorHandle
 from src.tools.device_ios import SimulatorHandle
 from src.tools.mobile import MobileSession, build_mobile_tools
 from src.tools.web import WebSession, build_web_tools
-from src.user_secrets import get_secret_plain
+from src.user_secrets import (
+    NO_EXTRA_CREDENTIALS,
+    get_bedrock_sigv4_credentials,
+    get_secret_plain,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -360,7 +364,11 @@ async def run_scenarios(state: RunState) -> RunState:
     # pro Ollama mesmo com uma chave configurada e válida (mesmo bug do
     # save_config/get_config, corrigido antes — esse era o terceiro lugar).
     api_key = get_secret_plain(provider.secret_name)
-    chat_model = build_chat_model(provider.id, run.llm_model or provider.example_model, api_key)
+    # Bedrock tem um modo avançado (SigV4) além da API key — as 3
+    # credenciais extras (ver docstring de src.llm_providers) só existem
+    # pra esse provider.
+    extra_credentials = get_bedrock_sigv4_credentials() if provider.id == "bedrock" else NO_EXTRA_CREDENTIALS
+    chat_model = build_chat_model(provider.id, run.llm_model or provider.example_model, api_key, **extra_credentials)
 
     test_data = store.get_run_test_data(run_id)
 

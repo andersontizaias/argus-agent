@@ -89,6 +89,66 @@ def test_save_and_retrieve_ollama_timeout_seconds():
     assert resp.json()["ollama_timeout_seconds"] == "600"
 
 
+def test_save_and_mask_bedrock_api_key_roundtrip():
+    # Fluxo padrão do Bedrock: só a API key + região, mesmo caminho de
+    # todo provider (secret_name genérico) — nenhuma configuração extra.
+    # Valor claramente fake (não parece uma credencial real) — o mesmo
+    # cuidado do "sk-fake-key-not-used" já usado em outros testes, pra não
+    # disparar a regra de entropia genérica do gitleaks.
+    with _client() as client:
+        resp = client.post("/api/config", json={
+            "bedrock_api_key": "fake-bedrock-key-not-used",
+            "bedrock_region": "us-east-1",
+        })
+        assert resp.status_code == 200
+
+        resp = client.get("/api/config")
+        body = resp.json()
+        assert body["bedrock_api_key"] == "fake****used"
+        assert body["bedrock_region"] == "us-east-1"
+
+        # Reenviar o placeholder mascarado preserva o valor salvo.
+        client.post("/api/config", json={"bedrock_api_key": body["bedrock_api_key"], "bedrock_region": "us-east-1"})
+        resp = client.get("/api/config")
+        assert resp.json()["bedrock_api_key"] == "fake****used"
+
+
+def test_save_and_mask_bedrock_sigv4_roundtrip():
+    # Fluxo avançado: os 3 secrets SigV4 mascaram/preservam de forma
+    # independente entre si, igual ao secret_name normal de outro provider.
+    # Valores claramente fake (mesmo cuidado do teste acima) — evita parecer
+    # uma AWS access key de verdade (formato "AKIA" + 16 chars) e disparar
+    # a regra de entropia genérica do gitleaks.
+    with _client() as client:
+        resp = client.post("/api/config", json={
+            "bedrock_access_key_id": "fake-aws-access-key-aaaa",
+            "bedrock_secret_access_key": "fake-aws-secret-key-bbbb",
+            "bedrock_session_token": "fake-aws-session-tok-cccc",
+            "bedrock_region": "us-west-2",
+        })
+        assert resp.status_code == 200
+
+        resp = client.get("/api/config")
+        body = resp.json()
+        assert body["bedrock_access_key_id"] == "fake****aaaa"
+        assert body["bedrock_secret_access_key"] == "fake****bbbb"
+        assert body["bedrock_session_token"] == "fake****cccc"
+        assert body["bedrock_region"] == "us-west-2"
+
+        # Reenviar os 3 placeholders mascarados preserva cada valor salvo.
+        client.post("/api/config", json={
+            "bedrock_access_key_id": body["bedrock_access_key_id"],
+            "bedrock_secret_access_key": body["bedrock_secret_access_key"],
+            "bedrock_session_token": body["bedrock_session_token"],
+            "bedrock_region": "us-west-2",
+        })
+        resp = client.get("/api/config")
+        body = resp.json()
+        assert body["bedrock_access_key_id"] == "fake****aaaa"
+        assert body["bedrock_secret_access_key"] == "fake****bbbb"
+        assert body["bedrock_session_token"] == "fake****cccc"
+
+
 def test_save_ollama_timeout_seconds_rejects_non_numeric():
     with _client() as client:
         resp = client.post("/api/config", json={"ollama_timeout_seconds": "abc"})
