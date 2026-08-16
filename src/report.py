@@ -47,6 +47,17 @@ _HTML_TEMPLATE = Template("""\
   <div>Tokens: {{ run.tokens_in }} in / {{ run.tokens_out }} out</div>
   <div>Custo estimado: ${{ "%.4f"|format(run.cost_usd) }}</div>
 </div>
+{% if run.mode == "explore" %}
+<div class="scenario">
+  <h2>Exploração — script Gherkin gerado</h2>
+  <p>Sem passo de entrada nesse modo: o agente navegou sozinho e o script \
+  abaixo é um CANDIDATO — revise antes de usar como run de regressão.</p>
+  {% for ev in exploration_video %}
+  <div class="evidence"><video src="{{ ev.path }}" controls style="max-width: 480px; border-radius: 6px;"></video></div>
+  {% endfor %}
+  <pre style="white-space: pre-wrap; background: #0f172a; padding: 1rem; border-radius: 6px;">{{ run.generated_bdd_script }}</pre>
+</div>
+{% else %}
 {% for scenario in scenarios %}
 <div class="scenario">
   <h2>{{ scenario.name }} <span class="status status-{{ scenario.status }}">{{ scenario.status }}</span></h2>
@@ -63,6 +74,7 @@ _HTML_TEMPLATE = Template("""\
   {% endfor %}
 </div>
 {% endfor %}
+{% endif %}
 </body>
 </html>
 """)
@@ -144,10 +156,20 @@ def compile_report(run_id: str) -> Path:
     if not run:  # pragma: no cover — checado no início da função, não pode sumir no meio
         raise ValueError(f"Run {run_id} não encontrada.")
 
+    # Vídeo da exploração (se houver): evidência de run inteira, sem
+    # step_id — cai na mesma chave "" usada acima pros passos sem
+    # evidência específica (não é o caso aqui, mas o dict já agrupa por
+    # step_id, e vídeo de exploração nunca tem um).
+    exploration_video = [
+        {"label": ev.label, "path": str(Path(ev.path).relative_to(run_dir)) if _is_within(ev.path, run_dir) else ev.path}
+        for ev in evidences_by_step.get("", []) if ev.type == "video"
+    ]
+
     report_data = {
         "run": {
             "id": run.id,
             "status": run.status,
+            "mode": run.mode,
             "platform": run.platform,
             "app_url": run.app_url,
             "llm_provider": run.llm_provider,
@@ -162,13 +184,15 @@ def compile_report(run_id: str) -> Path:
             "created_at": run.created_at.isoformat() if run.created_at else None,
             "started_at": run.started_at.isoformat() if run.started_at else None,
             "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            "generated_bdd_script": run.generated_bdd_script,
         },
         "scenarios": scenarios_data,
+        "exploration_video": exploration_video,
         "generated_at": datetime.now(UTC).isoformat(),
     }
 
     (run_dir / "report.json").write_text(json.dumps(report_data, indent=2, ensure_ascii=False), encoding="utf-8")
-    html = _HTML_TEMPLATE.render(run=report_data["run"], scenarios=scenarios_data)
+    html = _HTML_TEMPLATE.render(run=report_data["run"], scenarios=scenarios_data, exploration_video=exploration_video)
     (run_dir / "report.html").write_text(html, encoding="utf-8")
     store.set_run_artifacts_dir(run_id, str(run_dir))
 

@@ -46,6 +46,16 @@
   "newRun": {
     "title": "New Run",
     "subtitle": "Configure the target and the BDD script Argus will execute.",
+    "mode": "Mode",
+    "modeExecute": "Execute",
+    "modeExplore": "Explore",
+    "modeExecuteHelp": "Runs a BDD script you already wrote.",
+    "modeExploreHelp": "No script — Argus navigates on its own, discovers flows, and generates a candidate Gherkin script at the end for you to review. Only use against test/staging environments.",
+    "exploreSettings": "Exploration settings",
+    "maxActions": "Action budget",
+    "maxActionsHelp": "Maximum number of actions the agent can take before ending the exploration (between 1 and 100).",
+    "confirmNonProduction": "I confirm this is NOT a production environment — Argus will navigate and act on its own, with no step to follow.",
+    "confirmNonProductionRequired": "Confirm the target isn't production before exploring.",
     "target": "Test target",
     "platform": "Platform",
     "appUrl": "Application URL",
@@ -93,6 +103,14 @@
     "exportPdf": "Export PDF",
     "downloadArtifacts": "Download artifacts (.zip)",
     "noScenariosYet": "No scenarios yet — the run is being processed.",
-    "eventLog": "Event log"
+    "eventLog": "Event log",
+    "explorationVideo": "Exploration video",
+    "explorationTrace": "Exploration actions",
+    "generatedScript": "Generated Gherkin script",
+    "generatedScriptHelp": "Candidate generated automatically from the exploration — review before using it as a regression run.",
+    "copyScript": "Copy",
+    "copied": "Copied.",
+    "useInNewRun": "Use in New Run",
+    "exploring": "Exploring... the script shows up here once the exploration finishes."
   }
 }

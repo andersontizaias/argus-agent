@@ -21,6 +21,10 @@ class Run(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     platform: Mapped[str] = mapped_column(String, nullable=False)  # web | android | ios
+    # execute (padrão, roda um bdd_script) | explore (agente navega sozinho e
+    # gera um bdd_script candidato — bdd_script fica "" nesse modo, nunca
+    # None, pra não precisar tornar a coluna nullable).
+    mode: Mapped[str] = mapped_column(String, default="execute", server_default="execute")
     app_url: Mapped[str | None] = mapped_column(String, nullable=True)
     binary_url: Mapped[str | None] = mapped_column(String, nullable=True)
     binary_auth_secret: Mapped[str | None] = mapped_column(String, nullable=True)  # nome do secret, não o valor
@@ -33,6 +37,11 @@ class Run(Base):
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     job_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Só usados por mode="explore" (ver src/agent/nodes.py:explore_app):
+    max_actions: Mapped[int] = mapped_column(Integer, default=25, server_default="25")
+    confirmed_non_production: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    generated_bdd_script: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     scenarios_total: Mapped[int] = mapped_column(Integer, default=0)
     scenarios_passed: Mapped[int] = mapped_column(Integer, default=0)

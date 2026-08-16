@@ -243,6 +243,83 @@ describe('NewRunPage', () => {
     expect(screen.getByLabelText('Modelo default')).toHaveValue('llama-3.3-70b-versatile');
   });
 
+  it('toggles between the BDD script card and the exploration settings card based on mode', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({})));
+    renderWithProviders(<NewRunPage />);
+
+    // O <select> de modo fica dentro de um Card com CardTitle, sem <Label
+    // htmlFor> associado (só o título visual "Modo") — não dá pra achar por
+    // getByLabelText, então pega direto pelo id.
+    expect(screen.getByLabelText('Script BDD (Gherkin)')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Orçamento de ações')).not.toBeInTheDocument();
+
+    const modeSelect = document.getElementById('run-mode') as HTMLSelectElement;
+    await user.selectOptions(modeSelect, 'explore');
+
+    expect(screen.queryByLabelText('Script BDD (Gherkin)')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Orçamento de ações')).toBeInTheDocument();
+    expect(screen.getByText(/Confirmo que este NÃO é um ambiente de produção/)).toBeInTheDocument();
+
+    await user.selectOptions(modeSelect, 'execute');
+    expect(screen.getByLabelText('Script BDD (Gherkin)')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Orçamento de ações')).not.toBeInTheDocument();
+  });
+
+  it('strips non-digit characters from the exploration action budget field', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({})));
+    renderWithProviders(<NewRunPage />);
+
+    await user.selectOptions(document.getElementById('run-mode') as HTMLSelectElement, 'explore');
+    const input = screen.getByLabelText('Orçamento de ações');
+    await user.clear(input);
+    await user.type(input, '5a0b');
+
+    expect(input).toHaveValue('50');
+  });
+
+  it('blocks explore mode submission until the non-production checkbox is checked', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<NewRunPage />);
+
+    await user.selectOptions(document.getElementById('run-mode') as HTMLSelectElement, 'explore');
+    await user.type(screen.getByLabelText('URL da aplicação'), 'https://example.com');
+    await user.click(screen.getByRole('button', { name: 'Criar execução' }));
+
+    expect(await screen.findByText('Confirme que o alvo não é produção antes de explorar.')).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/runs', expect.anything());
+  });
+
+  it('creates an explore run and navigates to its detail page on success', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn((path: string, _init?: RequestInit) => {
+      if (path === '/api/runs') return Promise.resolve(jsonResponse({ id: 'run-999', status: 'queued' }));
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithProviders(<NewRunPage />);
+
+    await user.selectOptions(document.getElementById('run-mode') as HTMLSelectElement, 'explore');
+    await user.type(screen.getByLabelText('URL da aplicação'), 'https://example.com');
+    await user.click(screen.getByLabelText(/Confirmo que este NÃO é um ambiente de produção/));
+    await user.click(screen.getByRole('button', { name: 'Criar execução' }));
+
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/runs/run-999'));
+    const call = fetchMock.mock.calls.find(([path]) => path === '/api/runs');
+    expect(call).toBeTruthy();
+    const body = JSON.parse((call![1] as RequestInit).body as string);
+    expect(body).toMatchObject({
+      mode: 'explore',
+      confirmed_non_production: true,
+      max_actions: 25,
+      app_url: 'https://example.com',
+    });
+    expect(body.bdd_script).toBeUndefined();
+  });
+
   it('auto-fills the model field with that provider\'s own configured model, even when it is not the global default', async () => {
     // Regressão: antes, o prefill só usava o modelo salvo se o provider
     // escolhido fosse o "provider default" global — trocar pra outro

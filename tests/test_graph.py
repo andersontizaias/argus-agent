@@ -15,7 +15,7 @@ from typing import ClassVar
 import pytest
 
 from src import store
-from src.agent.executor import StepOutcome
+from src.agent.executor import ExploreActionOutcome, StepOutcome
 from src.agent.graph import run_graph
 from src.llm_providers import SUPPORTED_PROVIDERS
 from src.user_secrets import set_secret_plain
@@ -155,6 +155,100 @@ async def test_full_run_produces_correct_report_and_screenshots(monkeypatch, _co
     html_path = Path(final_run.artifacts_dir) / "report.html"
     assert html_path.exists()
     assert "Login válido" in html_path.read_text()
+
+
+async def test_explore_run_produces_generated_script_and_video_evidence(monkeypatch, _configure_provider):
+    """Equivalente do teste "full run" acima pro modo explore: fakes só o
+    LLM (`run_explore_action` age uma vez via as MESMAS tools que o agente
+    real usaria contra a página de verdade, depois declara concluído;
+    `synthesize_scenarios` devolve um .feature fixo) — prova a orquestração
+    completa (provisiona com gravação de vídeo → explora → sintetiza → salva
+    script + evidência de vídeo → teardown → relatório), sem depender de LLM
+    de verdade."""
+    from src.agent import nodes as nodes_module
+
+    fake_feature = (
+        "# language: pt\n"
+        "Funcionalidade: Login\n"
+        "  Cenario: Fluxo de login\n"
+        "    Dado que estou na pagina de login\n"
+        "    Quando clico em 'Login'\n"
+        "    Entao vejo uma mensagem de erro\n"
+    )
+    call_count = {"n": 0}
+
+    async def _fake_explore_action(*, tools, chat_model, history, max_actions):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            snapshot = await _tool(tools, "browser_snapshot").ainvoke({})
+            ref = next(line.split("]")[0][1:] for line in snapshot.splitlines() if "Login" in line)
+            await _tool(tools, "browser_click").ainvoke({"ref": ref})
+            return ExploreActionOutcome(False, "Clicou em 'Login'", 10, 5)
+        return ExploreActionOutcome(True, "Nada de novo pra explorar.", 5, 3)
+
+    async def _fake_synthesize(*, chat_model, trace, platform):
+        assert len(trace) == 2  # as 2 ações registradas por _fake_explore_action
+        assert platform == "web"
+        return fake_feature
+
+    monkeypatch.setattr(nodes_module, "run_explore_action", _fake_explore_action)
+    monkeypatch.setattr(nodes_module, "synthesize_scenarios", _fake_synthesize)
+
+    run = store.create_run(
+        platform="web", app_url=FIXTURE_URL,
+        bdd_script="", mode="explore", confirmed_non_production=True,
+        llm_provider=_configure_provider.id, llm_model=_configure_provider.example_model,
+    )
+
+    await run_graph(run.id)
+
+    final_run = store.get_run(run.id)
+    assert final_run.mode == "explore"
+    assert final_run.status == "passed"  # sem cenários pra falhar
+    assert final_run.generated_bdd_script == fake_feature
+    assert final_run.started_at is not None
+    assert final_run.finished_at is not None
+    assert final_run.tokens_in > 0 and final_run.tokens_out > 0
+
+    evidences = store.list_evidences(run.id)
+    video_evidences = [e for e in evidences if e.type == "video"]
+    assert len(video_evidences) == 1
+    assert Path(video_evidences[0].path).exists()
+
+    report_path = Path(final_run.artifacts_dir) / "report.json"
+    report = json.loads(report_path.read_text())
+    assert report["run"]["mode"] == "explore"
+    assert report["run"]["generated_bdd_script"] == fake_feature
+    assert len(report["exploration_video"]) == 1
+
+    html_path = Path(final_run.artifacts_dir) / "report.html"
+    assert "Fluxo de login" in html_path.read_text()
+
+
+async def test_explore_run_stops_at_max_actions_budget(monkeypatch, _configure_provider):
+    from src.agent import nodes as nodes_module
+
+    async def _fake_explore_action_never_done(*, tools, chat_model, history, max_actions):
+        return ExploreActionOutcome(False, f"Ação {len(history) + 1}", 1, 1)
+
+    async def _fake_synthesize(*, chat_model, trace, platform):
+        assert len(trace) == 3  # orçamento esgotado + a nota de "esgotado" anexada
+        return "# language: pt\nFuncionalidade: X\n  Cenario: Y\n    Dado algo\n"
+
+    monkeypatch.setattr(nodes_module, "run_explore_action", _fake_explore_action_never_done)
+    monkeypatch.setattr(nodes_module, "synthesize_scenarios", _fake_synthesize)
+
+    run = store.create_run(
+        platform="web", app_url=FIXTURE_URL,
+        bdd_script="", mode="explore", confirmed_non_production=True, max_actions=2,
+        llm_provider=_configure_provider.id, llm_model=_configure_provider.example_model,
+    )
+
+    await run_graph(run.id)
+
+    final_run = store.get_run(run.id)
+    assert final_run.status == "passed"
+    assert final_run.generated_bdd_script
 
 
 async def test_run_with_missing_placeholder_data_marks_run_as_error():
