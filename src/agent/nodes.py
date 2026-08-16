@@ -588,10 +588,26 @@ async def _maybe_start_mobile_recording(resources: "_RunResources", run_id: str)
     """Best-effort — falhar ao iniciar a gravação não deve impedir a
     exploração de rodar. `resources.mobile_recording_started` fica False se
     isso falhar, e `teardown_target` simplesmente não tenta salvar vídeo
-    nenhum nesse caso."""
+    nenhum nesse caso.
+
+    No iOS, o default do driver XCUITest pra `start_recording_screen` é
+    `videoType="mjpeg"` (Motion JPEG) — um codec que NENHUM navegador sabe
+    decodificar dentro de um `<video>` HTML5 (achado ao vivo: o player
+    ficava preso pra sempre em "carregando", mesmo depois do remux
+    "faststart" — o container estava certo, o CODEC que não tocava).
+    Força `libx264` (H.264, suportado universalmente) — a própria doc do
+    Appium recomenda `pixelFormat="yuv420p"` junto pra compatibilidade
+    ampla de player. Android já grava em H.264 nativamente via `adb
+    screenrecord` (não tem essa opção — nem precisa)."""
     assert resources.mobile_session is not None
+    session = resources.mobile_session
     try:
-        await asyncio.to_thread(resources.mobile_session.driver.start_recording_screen)
+        if session.platform == "ios":
+            await asyncio.to_thread(
+                session.driver.start_recording_screen, videoType="libx264", pixelFormat="yuv420p"
+            )
+        else:
+            await asyncio.to_thread(session.driver.start_recording_screen)
         resources.mobile_recording_started = True
     except Exception as e:
         logger.warning("Falha ao iniciar gravação de tela (run %s): %s", run_id, e)
@@ -620,7 +636,12 @@ def _remux_faststart(path: Path) -> None:
     (`-c copy`, sem reencode — rápido, sem perda) com `ffmpeg -movflags
     +faststart`. Best-effort: se o ffmpeg não estiver instalado ou a
     chamada falhar, mantém o arquivo cru — a evidência ainda fica salva e
-    baixável (`Baixar artefatos`), só não toca direto no navegador."""
+    baixável (`Baixar artefatos`), só não toca direto no navegador.
+
+    Rede de segurança independente do CODEC (que é o outro problema real
+    que o navegador tinha com o vídeo — ver `_maybe_start_mobile_recording`,
+    que força H.264 no iOS): mesmo com um codec suportado, nada garante que
+    o `moov` já venha no início por padrão."""
     if not shutil.which("ffmpeg"):
         logger.warning(
             "ffmpeg não encontrado — vídeo da exploração salvo sem remux 'faststart' "

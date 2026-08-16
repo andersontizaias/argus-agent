@@ -1,17 +1,29 @@
-"""Testes de `src.agent.nodes._remux_faststart` — o passo que corrige o
-`moov` atom no fim do .mp4 que `adb screenrecord`/`simctl io recordVideo`
-produzem (achado ao vivo: o `<video>` do browser fica preso em "carregando"
-pra sempre com um arquivo assim, mesmo o endpoint de evidência suportando
-Range corretamente — o problema é o container, não a entrega HTTP).
+"""Testes do pipeline de vídeo da exploração mobile (`src.agent.nodes`) —
+dois problemas reais achados ao vivo tocando o vídeo de uma run explore
+contra um app iOS de verdade, ambos fazendo o `<video>` do browser ficar
+preso em "carregando" pra sempre:
 
-Sem depender de um `ffmpeg` de verdade instalado no runner de CI: os
-testes mockam `subprocess.run`, cobrindo só a lógica Python ao redor dele
-(ausência do binário, falha da chamada, sucesso substituindo o arquivo)."""
+1. `_remux_faststart`: o átomo `moov` (índice de duração/posição dos
+   frames) vem no FIM do .mp4 que `adb screenrecord`/`simctl io
+   recordVideo` produzem — sem remuxar pro início, streaming progressivo
+   não consegue nem começar a decodar. Sem depender de um `ffmpeg` de
+   verdade instalado no runner de CI: a maioria dos testes mocka
+   `subprocess.run`, cobrindo só a lógica Python ao redor dele.
+2. `_maybe_start_mobile_recording`: o driver XCUITest (iOS) grava em
+   MJPEG por padrão — um codec que NENHUM navegador sabe decodificar num
+   `<video>` HTML5, mesmo com o container remuxado certinho."""
 import subprocess
 
 import pytest
 
-from src.agent.nodes import _remux_faststart
+from src.agent.nodes import (
+    _maybe_start_mobile_recording,
+    _remux_faststart,
+    _RunResources,
+)
+from src.tools.mobile import MobileSession
+
+pytestmark = pytest.mark.anyio
 
 
 def test_remux_skips_when_ffmpeg_not_installed(tmp_path, monkeypatch):
@@ -106,3 +118,56 @@ def test_remux_real_ffmpeg_moves_moov_atom_to_the_front(tmp_path):
     mdat_idx = data.find(b"mdat")
     assert moov_idx != -1 and mdat_idx != -1
     assert moov_idx < mdat_idx, "moov deveria vir antes de mdat depois do remux 'faststart'"
+
+
+class _FakeRecordingDriver:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def start_recording_screen(self, **options):
+        self.calls.append(options)
+
+
+class _FailingRecordingDriver:
+    def start_recording_screen(self, **options):
+        raise RuntimeError("boom")
+
+
+def _mobile_session(driver, tmp_path, platform):
+    return MobileSession(driver=driver, app_package="com.example.app", run_id="run-1", artifacts_dir=tmp_path, platform=platform)
+
+
+async def test_maybe_start_mobile_recording_forces_h264_on_ios(tmp_path):
+    # Regressão: o driver XCUITest grava em MJPEG por padrão — nenhum
+    # navegador sabe decodificar isso num <video> HTML5, mesmo com o
+    # container remuxado certinho (ver docstring do módulo).
+    driver = _FakeRecordingDriver()
+    resources = _RunResources()
+    resources.mobile_session = _mobile_session(driver, tmp_path, "ios")
+
+    await _maybe_start_mobile_recording(resources, "run-1")
+
+    assert resources.mobile_recording_started is True
+    assert driver.calls == [{"videoType": "libx264", "pixelFormat": "yuv420p"}]
+
+
+async def test_maybe_start_mobile_recording_uses_driver_default_on_android(tmp_path):
+    # Android (`adb screenrecord`) já grava em H.264 nativamente — não tem
+    # (nem precisa) da opção `videoType`.
+    driver = _FakeRecordingDriver()
+    resources = _RunResources()
+    resources.mobile_session = _mobile_session(driver, tmp_path, "android")
+
+    await _maybe_start_mobile_recording(resources, "run-1")
+
+    assert resources.mobile_recording_started is True
+    assert driver.calls == [{}]
+
+
+async def test_maybe_start_mobile_recording_failure_is_best_effort(tmp_path):
+    resources = _RunResources()
+    resources.mobile_session = _mobile_session(_FailingRecordingDriver(), tmp_path, "ios")
+
+    await _maybe_start_mobile_recording(resources, "run-1")  # não deve levantar
+
+    assert resources.mobile_recording_started is False
