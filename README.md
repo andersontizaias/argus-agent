@@ -4,7 +4,7 @@
 
 # 👁️ Argus Agent
 
-**Autonomous QA agent** with the persona of an "extremely efficient senior QA" — runs tests for **web**, **Android** and **iOS** apps from a BDD (Gherkin) script and a test data set, driving the real application (Playwright for web, Appium for mobile) and producing per-scenario reports with evidence.
+**Autonomous QA agent** with the persona of an "extremely efficient senior QA" — runs tests for **web**, **Android** and **iOS** apps from a BDD (Gherkin) script and a test data set, driving the real application (Playwright for web, Appium for mobile) and producing per-scenario reports with evidence. For apps with no test coverage yet, **Explore mode** flips this around: point Argus at the app with no script at all and it navigates on its own, then generates a candidate `.feature` (plus a session video) to bootstrap a regression suite.
 
 ![CI](https://github.com/andersontizaias/argus-agent/actions/workflows/ci.yml/badge.svg)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue?logo=python)
@@ -30,6 +30,7 @@
 - [🔁 LaunchAgents (start on login)](#-launchagents-start-on-login)
 - [📖 Usage](#-usage)
   - [📱 Mobile binaries](#-mobile-binaries)
+  - [🧭 Explore mode](#-explore-mode)
   - [📡 REST API](#-rest-api)
   - [🔌 MCP](#-mcp)
   - [🤝 A2A](#-a2a)
@@ -51,7 +52,7 @@ For architecture notes and design decisions, see [`PLANO.md`](./PLANO.md) *(deve
 
 - **Backend**: Python 3.12, FastAPI, SQLAlchemy + Alembic (SQLite WAL), LangGraph
 - **Frontend**: React 19, Vite, TypeScript, Tailwind v4
-- **Automation**: Playwright (web), Appium — UiAutomator2 (Android) and XCUITest (iOS)
+- **Automation**: Playwright (web), Appium — UiAutomator2 (Android) and XCUITest (iOS), ffmpeg (remuxes Explore-mode mobile session videos for browser playback)
 - **Integration**: REST API (`X-API-Key`), MCP (Streamable HTTP at `/mcp`), A2A (`/a2a` + AgentCard)
 
 ## 📦 Installation
@@ -135,9 +136,21 @@ Or both plus the Vite dev server together, from a development checkout:
 - **iOS**: a `.zip` containing a **Simulator build** of the `.app` (`Payload/<Name>.app/`), not a device `.ipa` — only the Simulator is supported, no physical device yet. What matters is the content, not the file extension: the `.app`'s `Info.plist` must have `iPhoneSimulator` in `CFBundleSupportedPlatforms`, so a zip named `.ipa` works fine as long as what's inside was built for the Simulator SDK. Most `.ipa`s you already have lying around (TestFlight, App Store, Ad Hoc) are device builds and get rejected with a clear error instead of failing cryptically mid-run.
   Typical way to produce one: `xcodebuild ... -sdk iphonesimulator -derivedDataPath build` (or `fastlane gym`/`build_app` with `destination: "generic/platform=iOS Simulator"`, `skip_package_ipa: true`), then zip the result: `ditto -c -k --sequesterRsrc --keepParent build/.../YourApp.app YourApp.zip`.
 
+### 🧭 Explore mode
+
+For a project with no BDD coverage yet, **New Run → Mode → Explore** skips the script entirely: point it at a web URL or a mobile binary, confirm the checkbox that the target **isn't production** (required — Argus acts on its own, with no human-written step to follow), and it navigates the app by itself, one action at a time, deciding what to click/tap/fill next based on what's on screen. When it runs out of new ground to cover (or hits the action budget, default 25, max 100), a separate synthesis call turns the trace into a candidate `.feature` (validated against the same Gherkin parser used for regular runs) for you to review, edit and reuse as a normal Execute run (**Use in New Run** on the Run Detail page pre-fills the script).
+
+Also recorded: a video of the whole session (Playwright's native recorder for web; Appium's `start_recording_screen` for mobile, forced to `libx264`/`yuv420p` and remuxed "faststart" after saving — see `_maybe_start_mobile_recording`/`_remux_faststart` in `src/agent/nodes.py` — so it streams in the browser right away instead of only after a full download) — useful to double-check what the agent actually did beyond what made it into the `.feature`.
+
+Guardrails are enforced in **code**, not just prompted: a denylist blocks tapping/clicking anything that looks like a real-effect action (delete, pay, submit, checkout, cancel subscription — pt+en), and web navigation is restricted to the run's starting origin. A blocked action shows up as a skipped note in the generated script instead of silently failing the run.
+
+Exploration quality tracks the LLM's agentic reliability more than its raw capability — a small/local model (e.g. Ollama) tends to loop on the same screen or misjudge whether a tap had any effect noticeably more often than a frontier hosted model; if the generated script looks too shallow, a stronger provider is usually the fix, not a bigger action budget. `mode`/`max_actions`/`confirmed_non_production` are REST-API-only for now — MCP's `run_test` and the A2A skill still cover Execute mode only.
+
 ### 📡 REST API
 
 `POST /api/runs` · `GET /api/runs` · `GET /api/runs/{id}` · `POST /api/runs/{id}/cancel` · `GET /api/runs/{id}/stream` (SSE) · `GET /api/runs/{id}/report[.html]` · `GET /api/runs/{id}/artifacts.zip` · `GET /api/evidences/{id}` · `POST /api/binaries/upload` · `GET`/`POST /api/config` · `POST /api/config/test-llm-provider/{id}` · CRUD `/api/api-keys` · `GET /api/health`.
+
+`POST /api/runs` body: `platform`, `mode` (`"execute"` default, or `"explore"` — see [Explore mode](#-explore-mode)), `bdd_script`/`test_data` (required for `execute`, omitted for `explore`), `app_url`/`binary_url`/`binary_auth_secret`, `llm_provider`/`llm_model` (falls back to the configured default), and, for `explore`: `max_actions` (1–100, default 25) and `confirmed_non_production` (must be `true`).
 
 Auth via `X-API-Key: argus_<prefix>_<random>` (shown once on creation). Typical CI flow: `POST /api/runs` → poll/SSE → exit code from the final `status` → download `report.json`.
 
@@ -161,7 +174,7 @@ LLM providers, binary-source secrets and report retention (`retention_days`, 30 
 
 ## 📊 Reports
 
-`~/.argus/artifacts/{run_id}/`: `report.json`, `report.html` (opens offline), `screenshots/`, `logs/agent.log` (test data redacted — values become `***`). Every report includes input/output token counts and the run's estimated cost. Terminated runs older than the configured retention are automatically pruned by the worker.
+`~/.argus/artifacts/{run_id}/`: `report.json`, `report.html` (opens offline), `screenshots/`, `logs/agent.log` (test data redacted — values become `***`). Every report includes input/output token counts and the run's estimated cost. Explore-mode runs additionally get `video/exploracao.mp4` (the session recording, see [Explore mode](#-explore-mode)) and the generated `.feature` text, both surfaced in the report and on the Run Detail page instead of a scenario list. Terminated runs older than the configured retention are automatically pruned by the worker.
 
 ## 🧪 Tests
 
