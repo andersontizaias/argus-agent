@@ -7,7 +7,7 @@ packages = ["src"]
 
 [project]
 name = "argus-agent"
-version = "0.1.13"
+version = "0.1.14"
 description = "Argus Agent — autonomous QA agent (web, Android, iOS) powered by LangGraph"
 license = "MIT"
 requires-python = ">=3.12"
