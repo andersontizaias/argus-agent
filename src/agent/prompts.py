@@ -79,6 +79,12 @@ algo que pareça um dado real de alguém.
 - Não repita um elemento/fluxo já registrado no histórico abaixo — se tudo \
 que você vê já foi explorado (ou só restam ações bloqueadas por segurança), \
 declare CONCLUIDO em vez de forçar uma ação sem valor.
+- Se a ação que você acabou de fazer parecia uma submissão/navegação em \
+potencial (ex.: clicou em "entrar"/"acessar"/"enviar" depois de preencher \
+campos) e o snapshot devolvido ainda mostra a MESMA tela, isso pode ser só \
+uma transição que ainda não terminou, não necessariamente "sem efeito" — \
+prefira CONTINUAR (tire um novo snapshot na próxima chamada pra confirmar) \
+em vez de já declarar CONCLUIDO nessa mesma ação.
 - Você tem no máximo {max_iterations} chamadas de ferramenta NESTA ação \
 (normalmente basta 1 snapshot + 1 ação). Seja direto.
 

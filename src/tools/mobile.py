@@ -43,6 +43,11 @@ from src.tools.explore_guardrails import DANGEROUS_ACTION_REFUSAL, is_dangerous_
 
 Platform = Literal["android", "ios"]
 
+# Pausa após um toque antes de tirar o snapshot de "resultado" — dá tempo
+# pra uma transição assíncrona (rede, animação) terminar antes de julgar se
+# a tela mudou. Ver comentário em `MobileSession.tap`.
+_ACTION_SETTLE_SECONDS = 1.5
+
 # ─── Android (UiAutomator2): XPath roda contra o page_source cru (dump XML
 # do UiAutomator) — os nomes de atributo aqui são os do XML (com hífen), não
 # os aceitos por `get_attribute` depois de já ter o elemento (esses usam
@@ -212,6 +217,17 @@ class MobileSession:
             await asyncio.to_thread(el.click)
         except StaleElementReferenceException as e:
             raise MobileToolError(f"Ref {ref} ficou obsoleta (a tela mudou) — tire um novo snapshot.") from e
+        # Um toque pode disparar uma transição assíncrona (chamada de rede,
+        # animação de tela) que ainda não terminou no instante em que
+        # tiramos o snapshot logo em seguida — sem essa pausa, o snapshot
+        # captura a tela ANTIGA e quem chamou (em especial o modo "explore",
+        # que decide sozinho e não tem um humano pra inserir um
+        # mobile_wait_for depois de um login/submit) conclui erradamente
+        # que a ação não teve efeito. Achado ao vivo: exploração declarou
+        # "CONCLUIDO" após tocar em "acessar" (login) sem ver mudança,
+        # enquanto o vídeo da sessão mostra a navegação pra tela seguinte
+        # completando alguns segundos depois, já fora da janela observada.
+        await asyncio.sleep(_ACTION_SETTLE_SECONDS)
         return f"Tocou em {ref}.\n\n" + await self.snapshot_text()
 
     async def type_text(self, ref: str, text: str) -> str:
