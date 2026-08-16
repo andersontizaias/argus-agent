@@ -233,6 +233,15 @@ class MobileSession:
     async def type_text(self, ref: str, text: str) -> str:
         el = self._require_element(ref)
         try:
+            # `send_keys` sozinho não garante que o campo esteja focado —
+            # no XCUITest (iOS) em especial, digitar num campo que não foi
+            # tocado antes pode não fazer NADA (nem erro, nem teclado, nem
+            # texto) de forma silenciosa: achado ao vivo, o agente "digitou"
+            # sem efeito nenhum até um toque manual (do usuário, fora do
+            # Argus) focar o campo — depois disso um `send_keys` seguinte
+            # funcionou. Um `click()` explícito antes garante o foco nos
+            # dois SOs, sem custo real (idempotente num campo já focado).
+            await asyncio.to_thread(el.click)
             await asyncio.to_thread(el.send_keys, text)
         except StaleElementReferenceException as e:
             raise MobileToolError(f"Ref {ref} ficou obsoleta (a tela mudou) — tire um novo snapshot.") from e

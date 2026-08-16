@@ -32,6 +32,7 @@ class _FakeElement:
         self.clicked = False
         self.sent_keys: str | None = None
         self.stale = False
+        self.call_order: list[str] = []
 
     def is_displayed(self):
         if self.stale:
@@ -47,10 +48,12 @@ class _FakeElement:
         if self.stale:
             raise StaleElementReferenceException("stale")
         self.clicked = True
+        self.call_order.append("click")
 
     def send_keys(self, text):
         if self.stale:
             raise StaleElementReferenceException("stale")
+        self.call_order.append("send_keys")
         self.sent_keys = text
 
 
@@ -126,6 +129,7 @@ class _FakeIOSElement:
         self.clicked = False
         self.sent_keys: str | None = None
         self.stale = False
+        self.call_order: list[str] = []
 
     def is_displayed(self):
         if self.stale:
@@ -141,10 +145,12 @@ class _FakeIOSElement:
         if self.stale:
             raise StaleElementReferenceException("stale")
         self.clicked = True
+        self.call_order.append("click")
 
     def send_keys(self, text):
         if self.stale:
             raise StaleElementReferenceException("stale")
+        self.call_order.append("send_keys")
         self.sent_keys = text
 
 
@@ -264,6 +270,21 @@ async def test_type_text_success(tmp_path):
     session, _ = _session(tmp_path, [el])
     await session.snapshot_text()
     await session.type_text("e1", "standard_user")
+    assert el.sent_keys == "standard_user"
+
+
+async def test_type_text_taps_the_field_first_to_ensure_focus(tmp_path):
+    # Regressão (achada ao vivo, iOS): `send_keys` sozinho não garante que
+    # o campo esteja focado — no XCUITest em especial, digitar sem antes
+    # tocar no campo pode não ter efeito nenhum, silenciosamente. `click`
+    # precisa acontecer ANTES de `send_keys`, não só em algum momento.
+    el = _FakeElement(class_name="android.widget.EditText")
+    session, _ = _session(tmp_path, [el])
+    await session.snapshot_text()
+
+    await session.type_text("e1", "standard_user")
+
+    assert el.call_order == ["click", "send_keys"]
     assert el.sent_keys == "standard_user"
 
 
@@ -435,6 +456,22 @@ async def test_ios_snapshot_falls_back_to_name_then_value_for_text(tmp_path):
     text = await session.snapshot_text()
     assert 'text "Bem-vindo"' in text
     assert 'textbox "usuario123"' in text
+
+
+async def test_ios_type_text_taps_the_field_first_to_ensure_focus(tmp_path):
+    # Regressão achada AO VIVO contra um app iOS de verdade: no XCUITest,
+    # `send_keys` num campo que não foi tocado antes pode não digitar NADA
+    # — silenciosamente, sem erro, sem teclado aparecendo. O agente
+    # "preencheu" o campo sem efeito real até um toque manual (fora do
+    # Argus) focar o campo; depois disso um `send_keys` seguinte funcionou.
+    field = _FakeIOSElement(tag_name="XCUIElementTypeTextField", element_id="el-1")
+    session, _ = _ios_session(tmp_path, [field])
+    await session.snapshot_text()
+
+    await session.type_text("e1", "explorer+argus@example.com")
+
+    assert field.call_order == ["click", "send_keys"]
+    assert field.sent_keys == "explorer+argus@example.com"
 
 
 async def test_ios_snapshot_skips_stale_elements_without_crashing(tmp_path):
