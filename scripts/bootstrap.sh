@@ -84,6 +84,13 @@ else
   _ok "installed via Homebrew — to use it outside this script, add ${NODE22_BIN} to your PATH"
 fi
 
+_step "ffmpeg"
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  brew install ffmpeg
+else
+  _ok "already installed ($(ffmpeg -version | head -1))"
+fi
+
 # 2. Android -----------------------------------------------------------------
 _step "Android SDK"
 ANDROID_HOME_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-${HOME}/Library/Android/sdk}}"

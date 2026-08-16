@@ -4,7 +4,7 @@ from src import doctor
 def test_run_checks_returns_all_expected_checks():
     results = doctor.run_checks()
     names = {r.name for r in results}
-    assert names == {"database", "disk", "playwright", "adb", "emulator", "xcrun", "appium"}
+    assert names == {"database", "disk", "playwright", "adb", "emulator", "xcrun", "appium", "ffmpeg"}
 
 
 def test_check_binary_not_found(monkeypatch):
