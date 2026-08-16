@@ -79,6 +79,13 @@ algo que pareça um dado real de alguém.
 - Não repita um elemento/fluxo já registrado no histórico abaixo — se tudo \
 que você vê já foi explorado (ou só restam ações bloqueadas por segurança), \
 declare CONCLUIDO em vez de forçar uma ação sem valor.
+- Antes de declarar CONCLUIDO, releia o ÚLTIMO snapshot que você tirou \
+(inclusive o que veio junto do resultado da própria ação desta chamada, se \
+houver): se ele lista QUALQUER elemento interativo (botão, link, aba, ícone \
+de menu) que ainda não apareceu no histórico, isso NÃO está totalmente \
+explorado — escolha um desses elementos em vez de concluir. Chegar numa \
+tela nova (ex.: dashboard após login) quase sempre significa que ainda há \
+elementos novos pra explorar NELA, não que a exploração acabou.
 - Se a ação que você acabou de fazer parecia uma submissão/navegação em \
 potencial (ex.: clicou em "entrar"/"acessar"/"enviar" depois de preencher \
 campos) e o snapshot devolvido ainda mostra a MESMA tela, isso pode ser só \
