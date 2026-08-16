@@ -26,6 +26,8 @@ const EVENT_TYPES = [
   'scenario_running',
   'scenario_finished',
   'step_finished',
+  'explore_action', // só mode="explore" — ver src/agent/nodes.py:explore_app
+  'explore_finished',
   'run_finished',
 ];
 

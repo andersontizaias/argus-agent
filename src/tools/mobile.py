@@ -39,6 +39,8 @@ from selenium.common.exceptions import (
     WebDriverException,
 )
 
+from src.tools.explore_guardrails import DANGEROUS_ACTION_REFUSAL, is_dangerous_action
+
 Platform = Literal["android", "ios"]
 
 # ─── Android (UiAutomator2): XPath roda contra o page_source cru (dump XML
@@ -121,6 +123,13 @@ class MobileSession:
     scenario_position: int = field(default=0)
     step_position: int = field(default=0)
     _elements: dict[str, Any] = field(default_factory=dict)
+    # Ref -> "role \"name\"" do último snapshot — mesma razão do
+    # `WebSession.last_elements`, ver lá: usado só pelo modo "explore" pra
+    # checar o alvo antes de agir, sem depender do LLM autorrelatar.
+    last_element_labels: dict[str, str] = field(default_factory=dict)
+
+    def element_label(self, ref: str) -> str:
+        return self.last_element_labels.get(ref, ref)
 
     def set_step_context(self, scenario_position: int, step_position: int) -> None:
         self.scenario_position = scenario_position
@@ -146,6 +155,7 @@ class MobileSession:
         # web: um cache que persiste sozinho entre chamadas vira uma fonte
         # de bugs sutis quando a tela muda).
         self._elements = {}
+        self.last_element_labels = {}
         xpath = _ANDROID_SNAPSHOT_XPATH if self.platform == "android" else _IOS_SNAPSHOT_XPATH
         try:
             found = self.driver.find_elements(AppiumBy.XPATH, xpath)
@@ -164,6 +174,7 @@ class MobileSession:
             idx += 1
             ref = f"e{idx}"
             self._elements[ref] = el
+            self.last_element_labels[ref] = f'{role} "{name}"'
             state = " [desabilitado]" if not enabled else ""
             rows.append(f'[{ref}] {role} "{name}"{state}')
         return rows
@@ -424,3 +435,80 @@ def build_mobile_tools(session: MobileSession) -> list:
         mobile_scroll_to, mobile_press_back, mobile_hide_keyboard, mobile_wait_for,
         mobile_screenshot, mobile_launch_app, mobile_terminate_app,
     ]
+
+
+def build_explore_mobile_tools(session: MobileSession) -> list:
+    """Mesma fábrica de `build_mobile_tools`, com um guardrail EM CÓDIGO
+    aplicado antes de tocar — obrigatório só no modo "explore" (o agente
+    escolhe as próprias ações, sem um passo determinado por um humano pra
+    seguir): `mobile_tap` recusa um alvo cujo nome/role bate no denylist de
+    ações perigosas (ver src/tools/explore_guardrails.py). Mobile não tem
+    uma tool de navegação
+    por URL (não existe endereço fora do app sob teste), então o guardrail
+    de "mesma origem" do lado web não se aplica aqui — o risco equivalente
+    (diálogos nativos de permissão/compra) fica a cargo do prompt de
+    exploração, documentado como lacuna conhecida."""
+
+    @tool
+    async def mobile_snapshot() -> str:
+        """Lê a tela atual do app: lista os elementos visíveis (botões,
+        campos, textos) com uma ref curta (ex.: [e3] button "Entrar")."""
+        return await session.snapshot_text()
+
+    @tool
+    async def mobile_tap(ref: str) -> str:
+        """Toca no elemento identificado pela ref. Recusa alvos que pareçam
+        iniciar uma ação com efeito real (comprar, excluir, cancelar,
+        enviar)."""
+        if is_dangerous_action(session.element_label(ref)):
+            return DANGEROUS_ACTION_REFUSAL
+        try:
+            return await session.tap(ref)
+        except MobileToolError as e:
+            return str(e)
+
+    @tool
+    async def mobile_type(ref: str, text: str) -> str:
+        """Digita texto num campo identificado pela ref. Use valores
+        obviamente fictícios (ex.: explorer+argus@example.com) — nunca dados
+        reais."""
+        try:
+            return await session.type_text(ref, text)
+        except MobileToolError as e:
+            return str(e)
+
+    @tool
+    async def mobile_swipe(direction: str) -> str:
+        """Faz um swipe na tela ("up" ou "down")."""
+        try:
+            return await session.swipe(direction)
+        except MobileToolError as e:
+            return str(e)
+
+    @tool
+    async def mobile_scroll_to(text: str) -> str:
+        """Rola a tela até encontrar um elemento cujo texto contenha o texto
+        informado."""
+        try:
+            return await session.scroll_to(text)
+        except MobileToolError as e:
+            return str(e)
+
+    @tool
+    async def mobile_press_back() -> str:
+        """Pressiona o botão de voltar do sistema (só Android)."""
+        try:
+            return await session.press_back()
+        except MobileToolError as e:
+            return str(e)
+
+    @tool
+    async def mobile_wait_for(text: str, timeout_ms: int = 8000) -> str:
+        """Espera até um texto aparecer visível na tela (timeout em ms,
+        default 8000)."""
+        try:
+            return await session.wait_for(text, timeout_ms)
+        except MobileToolError as e:
+            return str(e)
+
+    return [mobile_snapshot, mobile_tap, mobile_type, mobile_swipe, mobile_scroll_to, mobile_press_back, mobile_wait_for]

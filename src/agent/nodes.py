@@ -10,8 +10,10 @@ LangGraph (`RunState`) carrega só `run_id`/`error` — cenários/passos/status
 vivem no banco (`src.store`), que é a única fonte de verdade tanto para o
 relatório quanto pra retomar uma run interrompida."""
 import asyncio
+import base64
 import logging
 from collections.abc import Callable
+from typing import Any
 
 from appium import webdriver
 from appium.options.android import UiAutomator2Options
@@ -19,7 +21,12 @@ from appium.options.ios import XCUITestOptions
 from playwright.async_api import Browser, BrowserContext, Playwright, async_playwright
 
 from src import store
-from src.agent.executor import StepOutcome, run_step
+from src.agent.executor import (
+    StepOutcome,
+    run_explore_action,
+    run_step,
+    synthesize_scenarios,
+)
 from src.agent.state import RunState
 from src.bdd import (
     BddParseError,
@@ -50,8 +57,12 @@ from src.tools.binary_fetch import (
 )
 from src.tools.device_android import EmulatorHandle
 from src.tools.device_ios import SimulatorHandle
-from src.tools.mobile import MobileSession, build_mobile_tools
-from src.tools.web import WebSession, build_web_tools
+from src.tools.mobile import (
+    MobileSession,
+    build_explore_mobile_tools,
+    build_mobile_tools,
+)
+from src.tools.web import WebSession, build_explore_web_tools, build_web_tools
 from src.user_secrets import (
     NO_EXTRA_CREDENTIALS,
     get_bedrock_sigv4_credentials,
@@ -86,6 +97,14 @@ class _RunResources:
         self.web_session: WebSession | None = None
         self.appium: AppiumHandle | None = None
         self.mobile_session: MobileSession | None = None
+        # Só usados por mode="explore" (ver _provision_web/_provision_android/
+        # _provision_ios + teardown_target): referência ao vídeo da sessão
+        # (Playwright só resolve o path DEPOIS do context fechar — por isso
+        # guarda a referência aqui, não o path) e se a gravação mobile foi
+        # iniciada com sucesso (start_recording_screen pode falhar sem
+        # impedir a exploração de rodar — best-effort).
+        self.web_video: Any | None = None
+        self.mobile_recording_started: bool = False
 
 
 async def _safe_close_web(resources: "_RunResources") -> None:
@@ -164,6 +183,13 @@ async def parse_bdd(state: RunState) -> RunState:
     if not run:
         return _fail(state, run_id, "Run não encontrada.")
 
+    if run.mode == "explore":
+        # Sem script de entrada nesse modo — o agente explora sozinho e
+        # PRODUZ um (ver explore_app). Nada pra parsear aqui.
+        store.update_run_status(run_id, "provisioning")
+        publish_event(run_id, "run_provisioning", {"scenarios_total": 0})
+        return state
+
     try:
         scenarios = parse_bdd_script(run.bdd_script)
         test_data = store.get_run_test_data(run_id)
@@ -197,10 +223,23 @@ async def _provision_web(state: RunState, run_id: str, run) -> RunState:
     try:
         resources.playwright = await async_playwright().start()
         resources.browser = await resources.playwright.chromium.launch(headless=True)
-        resources.context = await resources.browser.new_context()
-        page = await resources.context.new_page()
         run_dir = artifacts_dir() / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
+
+        context_kwargs: dict[str, Any] = {}
+        if run.mode == "explore":
+            # Vídeo da sessão inteira pra alguém revisar visualmente o que
+            # foi capturado (em vez de confiar só no .feature gerado) —
+            # gravação nativa do Playwright, só finaliza quando o context
+            # fecha (ver teardown_target/_save_web_video_evidence).
+            video_dir = run_dir / "video"
+            video_dir.mkdir(parents=True, exist_ok=True)
+            context_kwargs["record_video_dir"] = str(video_dir)
+            context_kwargs["record_video_size"] = {"width": 1280, "height": 720}
+
+        resources.context = await resources.browser.new_context(**context_kwargs)
+        page = await resources.context.new_page()
+        resources.web_video = page.video
         resources.web_session = WebSession(page=page, run_id=run_id, artifacts_dir=run_dir)
         if run.app_url:
             await page.goto(run.app_url, wait_until="load", timeout=30_000)
@@ -258,6 +297,8 @@ async def _provision_android(state: RunState, run_id: str, run) -> RunState:
         resources.mobile_session = MobileSession(
             driver=driver, app_package=app_package, run_id=run_id, artifacts_dir=run_dir, platform="android"
         )
+        if run.mode == "explore":
+            await _maybe_start_mobile_recording(resources, run_id)
     except Exception as e:
         await _safe_close_mobile(resources)
         return _fail(state, run_id, f"Falha ao provisionar o dispositivo Android: {e}")
@@ -311,6 +352,8 @@ async def _provision_ios(state: RunState, run_id: str, run) -> RunState:
         resources.mobile_session = MobileSession(
             driver=driver, app_package=bundle_id, run_id=run_id, artifacts_dir=run_dir, platform="ios"
         )
+        if run.mode == "explore":
+            await _maybe_start_mobile_recording(resources, run_id)
     except Exception as e:
         await _safe_close_mobile(resources)
         return _fail(state, run_id, f"Falha ao provisionar o simulador iOS: {e}")
@@ -446,14 +489,151 @@ async def _run_step_with_retry(
     return StepOutcome(outcome.passed, outcome.message, tokens_in, tokens_out)  # pragma: no cover — inatingível
 
 
+async def explore_app(state: RunState) -> RunState:
+    """Nó do modo "explore" (paralelo a `run_scenarios`): sem um script BDD
+    de entrada, o agente escolhe as próprias ações — uma invocação ReAct
+    "fresca" por ação (`run_explore_action`), até declarar CONCLUIDO ou
+    esgotar `run.max_actions`. Ao final, uma chamada de síntese SEPARADA
+    transforma o trace num `.feature` candidato, validado com
+    `parse_bdd_script` antes de salvar (ver docstring de
+    `_synthesize_with_validation`)."""
+    run_id = state["run_id"]
+    run = store.get_run(run_id)
+    resources = _SESSIONS.get(run_id)
+    if not run or not resources:
+        return state  # provision_target já falhou — nada a fazer aqui
+
+    if resources.web_session is not None:
+        web_session = resources.web_session
+        session: WebSession | MobileSession = web_session
+        tools = build_explore_web_tools(web_session, allowed_origin=run.app_url or "")
+    elif resources.mobile_session is not None:
+        mobile_session = resources.mobile_session
+        session = mobile_session
+        tools = build_explore_mobile_tools(mobile_session)
+    else:
+        return state  # provision_target já falhou — nada a fazer aqui
+
+    provider = get_provider(run.llm_provider or "")
+    if not provider:
+        return _fail(state, run_id, f"Provider LLM desconhecido: {run.llm_provider}")
+    api_key = get_secret_plain(provider.secret_name)
+    extra_credentials = get_bedrock_sigv4_credentials() if provider.id == "bedrock" else NO_EXTRA_CREDENTIALS
+    chat_model = build_chat_model(provider.id, run.llm_model or provider.example_model, api_key, **extra_credentials)
+
+    max_actions = run.max_actions
+    history: list[str] = []
+    for i in range(max_actions):
+        if store.is_cancel_requested(run_id):
+            history.append("Exploração cancelada pelo usuário.")
+            break
+
+        session.set_step_context(0, i)
+        outcome = await run_explore_action(tools=tools, chat_model=chat_model, history=history, max_actions=max_actions)
+
+        if outcome.tokens_in or outcome.tokens_out:
+            cost_usd = estimate_cost_usd(
+                run.llm_model or "", tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out
+            )
+            store.add_run_usage(run_id, tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out, cost_usd=cost_usd)
+
+        history.append(outcome.description)
+        publish_event(run_id, "explore_action", {"index": i, "description": outcome.description, "done": outcome.done})
+        if outcome.done:
+            break
+    else:
+        history.append(f"Orçamento de {max_actions} ações esgotado.")
+
+    generated = await _synthesize_with_validation(chat_model=chat_model, trace=history, platform=run.platform, run_id=run_id)
+    store.set_run_generated_bdd_script(run_id, generated)
+    publish_event(run_id, "explore_finished", {})
+    return state
+
+
+async def _synthesize_with_validation(*, chat_model, trace: list[str], platform: str, run_id: str) -> str:
+    """`synthesize_scenarios` nunca levanta, mas o texto que ela devolve pode
+    não ser Gherkin válido (o LLM erra sintaxe às vezes) — valida com
+    `parse_bdd_script` antes de aceitar; se falhar, tenta MAIS UMA VEZ com o
+    erro de sintaxe anexado ao trace (dá pro LLM a chance de se corrigir); se
+    falhar de novo, salva mesmo assim como texto anotado — sempre sobra ALGO
+    pro usuário revisar, nunca perde o trabalho da exploração."""
+    generated = await synthesize_scenarios(chat_model=chat_model, trace=trace, platform=platform)
+    try:
+        parse_bdd_script(generated)
+        return generated
+    except BddParseError as e:
+        parse_error = str(e)
+        logger.warning("Feature gerado pela exploração (run %s) não parseou: %s — tentando de novo.", run_id, parse_error)
+
+    retry_trace = [
+        *trace,
+        f"(NOTA: a tentativa anterior de escrever o .feature teve um erro de sintaxe Gherkin — corrija: {parse_error})",
+    ]
+    generated_retry = await synthesize_scenarios(chat_model=chat_model, trace=retry_trace, platform=platform)
+    try:
+        parse_bdd_script(generated_retry)
+        return generated_retry
+    except BddParseError as e2:
+        logger.warning("Segunda tentativa também não parseou (run %s): %s — salvando como texto bruto.", run_id, e2)
+        return (
+            f"# ATENÇÃO: este .feature não passou na validação de sintaxe automaticamente "
+            f"({e2}) — revise antes de usar.\n\n{generated_retry}"
+        )
+
+
+async def _maybe_start_mobile_recording(resources: "_RunResources", run_id: str) -> None:
+    """Best-effort — falhar ao iniciar a gravação não deve impedir a
+    exploração de rodar. `resources.mobile_recording_started` fica False se
+    isso falhar, e `teardown_target` simplesmente não tenta salvar vídeo
+    nenhum nesse caso."""
+    assert resources.mobile_session is not None
+    try:
+        await asyncio.to_thread(resources.mobile_session.driver.start_recording_screen)
+        resources.mobile_recording_started = True
+    except Exception as e:
+        logger.warning("Falha ao iniciar gravação de tela (run %s): %s", run_id, e)
+
+
+async def _save_web_video_evidence(run_id: str, video: Any) -> None:
+    """`video.path()` só resolve DEPOIS do context ter fechado (contrato do
+    Playwright) — por isso `teardown_target` chama isso só após
+    `_safe_close_web`."""
+    try:
+        path = await video.path()
+        store.add_evidence(run_id, None, "video", "Exploração", str(path))
+    except Exception as e:
+        logger.warning("Falha ao salvar o vídeo da exploração web (run %s): %s", run_id, e)
+
+
+async def _save_mobile_video_evidence(run_id: str, session: MobileSession) -> None:
+    """Precisa rodar ANTES de `_safe_close_mobile` (que dá `driver.quit()`) —
+    ao contrário do lado web, aqui a gravação precisa ser parada enquanto a
+    sessão do driver ainda está viva."""
+    try:
+        b64_video = await asyncio.to_thread(session.driver.stop_recording_screen)
+        video_dir = session.artifacts_dir / "video"
+        video_dir.mkdir(parents=True, exist_ok=True)
+        path = video_dir / "exploracao.mp4"
+        path.write_bytes(base64.b64decode(b64_video))
+        store.add_evidence(run_id, None, "video", "Exploração", str(path))
+    except Exception as e:
+        logger.warning("Falha ao salvar o vídeo da exploração mobile (run %s): %s", run_id, e)
+
+
 async def teardown_target(state: RunState) -> RunState:
     run_id = state["run_id"]
     resources = _SESSIONS.pop(run_id, None)
     if not resources:
         return state
+
     if resources.web_session is not None:
+        video = resources.web_video
         await _safe_close_web(resources)
+        if video is not None:
+            await _save_web_video_evidence(run_id, video)
     elif resources.mobile_session is not None:
+        if resources.mobile_recording_started:
+            await _save_mobile_video_evidence(run_id, resources.mobile_session)
         await _safe_close_mobile(resources)
     return state
 

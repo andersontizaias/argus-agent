@@ -21,10 +21,17 @@ from dataclasses import dataclass
 
 from langchain.agents import create_agent
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.errors import GraphRecursionError
 
-from src.agent.prompts import PERSONA_SYSTEM_PROMPT, build_step_prompt
+from src.agent.prompts import (
+    EXPLORATION_SYSTEM_PROMPT,
+    PERSONA_SYSTEM_PROMPT,
+    SYNTHESIS_SYSTEM_PROMPT,
+    build_exploration_prompt,
+    build_step_prompt,
+    build_synthesis_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,3 +136,102 @@ def _sum_usage(agent_result: dict) -> tuple[int, int]:
             tokens_in += usage.get("input_tokens") or 0
             tokens_out += usage.get("output_tokens") or 0
     return tokens_in, tokens_out
+
+
+# ─── Modo "explore" — agente navega sozinho, sem passo dado por um humano
+# (ver docstring do módulo + src/agent/prompts.py) ─────────────────────────
+
+_EXPLORE_RESULT_RE = re.compile(r"RESULTADO:\s*(CONTINUAR|CONCLUIDO)\s*(?:—|-)?\s*(.*)", re.IGNORECASE | re.DOTALL)
+
+# Cada ação de exploração normalmente basta 1 snapshot + 1 ato — bem menor
+# que DEFAULT_MAX_ITERATIONS (um passo Gherkin comum pode precisar de mais
+# idas e vindas até confirmar um veredito). O orçamento GERAL de ações da
+# exploração inteira é outro número (`run.max_actions`, ver
+# src/run_service.py) — este aqui é só o limite POR ação individual.
+DEFAULT_EXPLORE_ACTION_MAX_ITERATIONS = 4
+
+
+@dataclass(frozen=True)
+class ExploreActionOutcome:
+    """`done=True` encerra o loop de exploração (nó chamador em
+    src/agent/nodes.py) — seja porque o agente decidiu que não há mais nada
+    de novo (veredito CONCLUIDO), seja por qualquer falha (nunca deixamos um
+    erro persistente virar loop sem fim)."""
+
+    done: bool
+    description: str
+    tokens_in: int = 0
+    tokens_out: int = 0
+
+
+async def run_explore_action(
+    *,
+    tools: list,
+    chat_model: BaseChatModel,
+    history: list[str],
+    max_actions: int,
+    max_iterations: int = DEFAULT_EXPLORE_ACTION_MAX_ITERATIONS,
+) -> ExploreActionOutcome:
+    """Executa UMA ação de exploração via um agente ReAct fresco — mesmo
+    padrão de `run_step` (contexto zerado a cada chamada, só o resumo
+    `history` dá continuidade), mas sem um `step_text` de entrada: o próprio
+    agente escolhe o que fazer a cada chamada. Nunca levanta."""
+    prompt = build_exploration_prompt(history=history, max_actions=max_actions)
+
+    try:
+        agent = create_agent(
+            model=chat_model,
+            tools=tools,
+            system_prompt=EXPLORATION_SYSTEM_PROMPT.format(max_iterations=max_iterations),
+        )
+        result = await agent.ainvoke(
+            {"messages": [HumanMessage(content=prompt)]},
+            config={"recursion_limit": max_iterations * 2 + 6},
+        )
+    except GraphRecursionError:
+        return ExploreActionOutcome(True, "Encerrado: o agente excedeu o limite de chamadas de ferramenta desta ação.")
+    except Exception as e:
+        logger.warning("Falha ao executar ação de exploração via LLM: %s", e)
+        return ExploreActionOutcome(True, f"Encerrado por erro: {e}")
+
+    tokens_in, tokens_out = _sum_usage(result)
+    final_content = _final_text(result)
+    if _STEPS_EXHAUSTED_MARKER in final_content.lower():
+        return ExploreActionOutcome(
+            True, "Encerrado: limite de chamadas de ferramenta desta ação.", tokens_in, tokens_out
+        )
+
+    match = _EXPLORE_RESULT_RE.search(final_content)
+    if not match:
+        return ExploreActionOutcome(
+            True, f"Encerrado: o agente não declarou um veredito claro. Última resposta: {final_content[:300]}",
+            tokens_in, tokens_out,
+        )
+
+    done = match.group(1).upper() == "CONCLUIDO"
+    description = match.group(2).strip() or final_content.strip()
+    return ExploreActionOutcome(done, description, tokens_in, tokens_out)
+
+
+async def synthesize_scenarios(*, chat_model: BaseChatModel, trace: list[str], platform: str) -> str:
+    """Chamada de síntese SEPARADA (sem tools, contexto novo) — transforma o
+    trace de ações da exploração num `.feature` Gherkin candidato. Nunca
+    levanta: uma falha vira um texto todo comentado (não um Gherkin válido,
+    de propósito — quem chama, src/agent/nodes.py, precisa distinguir um
+    resultado utilizável de um fallback) com o trace bruto, pra sempre sobrar
+    ALGO pro usuário revisar mesmo se a síntese em si falhar."""
+    prompt = build_synthesis_prompt(trace=trace, platform=platform)
+    try:
+        result = await chat_model.ainvoke(
+            [SystemMessage(content=SYNTHESIS_SYSTEM_PROMPT), HumanMessage(content=prompt)]
+        )
+        content = result.content
+        return content if isinstance(content, str) else str(content)
+    except Exception as e:
+        logger.warning("Falha ao sintetizar cenários da exploração: %s", e)
+        trace_block = "\n".join(f"# - {line}" for line in trace) or "# (nenhuma ação registrada)"
+        return (
+            "# language: pt\n"
+            f"# A síntese automática falhou ({e}) — trace bruto abaixo pra revisão manual:\n"
+            f"{trace_block}\n"
+        )

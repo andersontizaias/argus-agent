@@ -30,6 +30,53 @@ def test_create_run_web_happy_path(configured_provider):
     assert run.status == "queued"
 
 
+def test_create_run_explore_happy_path(configured_provider):
+    run = run_service.create_run(
+        platform="web", app_url="https://example.com", mode="explore", confirmed_non_production=True,
+    )
+    assert run.mode == "explore"
+    assert run.bdd_script == ""
+    assert run.max_actions == run_service.DEFAULT_EXPLORE_MAX_ACTIONS
+    assert run.confirmed_non_production is True
+
+
+def test_create_run_explore_requires_confirmed_non_production(configured_provider):
+    with pytest.raises(run_service.RunServiceError, match="confirmed_non_production"):
+        run_service.create_run(platform="web", app_url="https://example.com", mode="explore")
+
+
+def test_create_run_explore_does_not_require_bdd_script(configured_provider):
+    # Diferente do modo execute — sem script de entrada nesse modo, o
+    # agente explora sozinho e PRODUZ um (ver src/agent/nodes.py:explore_app).
+    run = run_service.create_run(
+        platform="web", app_url="https://example.com", bdd_script="", mode="explore",
+        confirmed_non_production=True,
+    )
+    assert run.status == "queued"
+
+
+def test_create_run_explore_accepts_custom_max_actions(configured_provider):
+    run = run_service.create_run(
+        platform="web", app_url="https://example.com", mode="explore",
+        confirmed_non_production=True, max_actions=10,
+    )
+    assert run.max_actions == 10
+
+
+@pytest.mark.parametrize("max_actions", [0, -1, 101])
+def test_create_run_explore_rejects_max_actions_out_of_range(configured_provider, max_actions):
+    with pytest.raises(run_service.RunServiceError, match="max_actions"):
+        run_service.create_run(
+            platform="web", app_url="https://example.com", mode="explore",
+            confirmed_non_production=True, max_actions=max_actions,
+        )
+
+
+def test_create_run_rejects_invalid_mode(configured_provider):
+    with pytest.raises(run_service.RunServiceError, match="Invalid mode"):
+        run_service.create_run(platform="web", bdd_script=VALID_BDD, mode="bogus")
+
+
 def test_create_run_android_requires_binary_url(configured_provider):
     with pytest.raises(run_service.RunServiceError, match="requires binary_url"):
         run_service.create_run(platform="android", bdd_script=VALID_BDD)

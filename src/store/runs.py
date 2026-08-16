@@ -15,10 +15,14 @@ def create_run(
     binary_auth_secret: str | None = None,
     llm_provider: str | None = None,
     llm_model: str | None = None,
+    mode: str = "execute",
+    max_actions: int = 25,
+    confirmed_non_production: bool = False,
 ) -> models.Run:
     test_data_enc = crypto.encrypt_secret(json.dumps(test_data or {}))
     row = models.Run(
         platform=platform,
+        mode=mode,
         app_url=app_url,
         binary_url=binary_url,
         binary_auth_secret=binary_auth_secret,
@@ -27,6 +31,8 @@ def create_run(
         llm_provider=llm_provider,
         llm_model=llm_model,
         status="queued",
+        max_actions=max_actions,
+        confirmed_non_production=confirmed_non_production,
     )
     with db.session_scope() as session:
         session.add(row)
@@ -93,6 +99,13 @@ def add_run_usage(run_id: str, *, tokens_in: int, tokens_out: int, cost_usd: flo
         run.tokens_in += tokens_in
         run.tokens_out += tokens_out
         run.cost_usd += cost_usd
+
+
+def set_run_generated_bdd_script(run_id: str, script: str) -> None:
+    with db.session_scope() as session:
+        run = session.get(models.Run, run_id)
+        if run:
+            run.generated_bdd_script = script
 
 
 def set_run_artifacts_dir(run_id: str, path: str) -> None:
