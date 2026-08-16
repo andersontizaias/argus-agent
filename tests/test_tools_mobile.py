@@ -218,6 +218,32 @@ async def test_tap_success_returns_new_snapshot(tmp_path):
     assert "Tocou em e1" in result
 
 
+async def test_tap_waits_for_the_screen_to_settle_before_snapshotting(tmp_path, monkeypatch):
+    # Regressão (achada ao vivo no modo Explorar contra um app real): tirar
+    # o snapshot de resultado LOGO após o toque corre o risco de capturar a
+    # tela ANTIGA se a transição (rede, animação) ainda não terminou — o
+    # agente concluía "toque sem efeito" e declarava CONCLUIDO, enquanto o
+    # vídeo da sessão mostrava a navegação completando alguns segundos
+    # depois, já fora da janela observada. Só confere que a pausa É
+    # chamada com o valor esperado antes do snapshot, sem consumir o tempo
+    # de verdade (fake substitui o sleep).
+    calls: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(seconds: float) -> None:
+        calls.append(seconds)
+
+    monkeypatch.setattr(mobile.asyncio, "sleep", fake_sleep)
+    el = _FakeElement(content_desc="Entrar")
+    session, _ = _session(tmp_path, [el])
+    await session.snapshot_text()
+
+    await session.tap("e1")
+
+    assert calls == [mobile._ACTION_SETTLE_SECONDS]
+    await real_sleep(0)  # sanity: o sleep de verdade continua utilizável fora do fake
+
+
 async def test_tap_unknown_ref_raises_mobile_tool_error(tmp_path):
     session, _ = _session(tmp_path, [])
     with pytest.raises(MobileToolError, match="não encontrada"):

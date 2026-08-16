@@ -7,6 +7,7 @@ import pytest
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
+from src.tools import web as web_module
 from src.tools.web import WebSession, WebToolError, build_web_tools
 
 FIXTURE_URL = f"file://{Path(__file__).parent / 'fixtures' / 'login.html'}"
@@ -177,6 +178,29 @@ async def test_fill_and_click_failed_login_shows_error(session):
 async def test_wait_for_missing_text_raises_web_tool_error(session):
     with pytest.raises(WebToolError, match="não apareceu"):
         await session.wait_for("texto que nunca vai aparecer", timeout_ms=500)
+
+
+async def test_click_waits_for_the_screen_to_settle_before_snapshotting(session, monkeypatch):
+    # Regressão (achada ao vivo no modo Explorar contra um app real): tirar
+    # o snapshot de resultado LOGO após o clique corre o risco de capturar
+    # a tela ANTIGA se a transição (fetch, redirect, animação) ainda não
+    # terminou — o agente concluía "clique sem efeito" e declarava
+    # CONCLUIDO, enquanto o vídeo da sessão mostrava a navegação
+    # completando alguns segundos depois, já fora da janela observada. Só
+    # confere que a pausa É chamada com o valor esperado antes do
+    # snapshot, sem consumir o tempo de verdade (fake substitui o wait).
+    calls: list[int] = []
+
+    async def fake_wait_for_timeout(ms: int) -> None:
+        calls.append(ms)
+
+    monkeypatch.setattr(session.page, "wait_for_timeout", fake_wait_for_timeout)
+    snapshot = await session.snapshot_text()
+    login_ref = _ref_for(snapshot, "Login")
+
+    await session.click(login_ref)
+
+    assert calls == [web_module._ACTION_SETTLE_MS]
 
 
 async def test_click_unknown_ref_raises_web_tool_error(session):

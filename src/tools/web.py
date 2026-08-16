@@ -109,6 +109,12 @@ class WebToolError(RuntimeError):
     texto de erro devolvido como resultado da tool."""
 
 
+# Pausa após um clique/tecla antes de tirar o snapshot de "resultado" — dá
+# tempo pra uma transição assíncrona (fetch, animação, redirect) terminar
+# antes de julgar se a tela mudou. Ver comentário em `WebSession.click`.
+_ACTION_SETTLE_MS = 1500
+
+
 @dataclass
 class WebSession:
     """Estado vivo de uma run web: página do Playwright + onde salvar
@@ -182,6 +188,18 @@ class WebSession:
     async def click(self, ref: str) -> str:
         locator = await self._require_locator(ref)
         await locator.click(timeout=5_000)
+        # Um clique pode disparar uma transição assíncrona (fetch, redirect,
+        # animação) que ainda não terminou no instante em que tiramos o
+        # snapshot logo em seguida — sem essa pausa, o snapshot captura a
+        # tela ANTIGA e quem chamou (em especial o modo "explore", que
+        # decide sozinho e não tem um humano pra inserir um
+        # browser_wait_for depois de um login/submit) conclui erradamente
+        # que o clique não teve efeito. Achado ao vivo (lado mobile, mesma
+        # classe de bug): exploração declarou "CONCLUIDO" após tocar em
+        # "acessar" sem ver mudança, enquanto o vídeo da sessão mostra a
+        # navegação completando alguns segundos depois, já fora da janela
+        # observada.
+        await self.page.wait_for_timeout(_ACTION_SETTLE_MS)
         return f"Clicou em {ref}.\n\n" + await self.snapshot_text()
 
     async def fill(self, ref: str, text: str) -> str:
@@ -196,6 +214,7 @@ class WebSession:
 
     async def press_key(self, key: str) -> str:
         await self.page.keyboard.press(key)
+        await self.page.wait_for_timeout(_ACTION_SETTLE_MS)  # ver comentário em `click`
         return f"Pressionou a tecla {key}.\n\n" + await self.snapshot_text()
 
     async def hover(self, ref: str) -> str:
