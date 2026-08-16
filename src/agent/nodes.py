@@ -12,7 +12,10 @@ relatório quanto pra retomar uma run interrompida."""
 import asyncio
 import base64
 import logging
+import shutil
+import subprocess
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from appium import webdriver
@@ -581,14 +584,50 @@ async def _synthesize_with_validation(*, chat_model, trace: list[str], platform:
         )
 
 
+_IOS_RECORDING_TIME_LIMIT_SECONDS = 600  # máximo aceito pelo driver XCUITest
+_ANDROID_RECORDING_TIME_LIMIT_SECONDS = 180  # máximo aceito por `adb screenrecord` — não dá pra passar disso numa única gravação
+
+
 async def _maybe_start_mobile_recording(resources: "_RunResources", run_id: str) -> None:
     """Best-effort — falhar ao iniciar a gravação não deve impedir a
     exploração de rodar. `resources.mobile_recording_started` fica False se
     isso falhar, e `teardown_target` simplesmente não tenta salvar vídeo
-    nenhum nesse caso."""
+    nenhum nesse caso.
+
+    No iOS, o default do driver XCUITest pra `start_recording_screen` é
+    `videoType="mjpeg"` (Motion JPEG) — um codec que NENHUM navegador sabe
+    decodificar dentro de um `<video>` HTML5 (achado ao vivo: o player
+    ficava preso pra sempre em "carregando", mesmo depois do remux
+    "faststart" — o container estava certo, o CODEC que não tocava).
+    Força `libx264` (H.264, suportado universalmente) — a própria doc do
+    Appium recomenda `pixelFormat="yuv420p"` junto pra compatibilidade
+    ampla de player. Android já grava em H.264 nativamente via `adb
+    screenrecord` (não tem essa opção — nem precisa).
+
+    `timeLimit` do driver tem DEFAULT de 180s (3min) nos dois SOs — bem
+    menos que uma exploração de verdade costuma levar (achado ao vivo: uma
+    run que só chegou no dashboard aos ~4min13s teve um vídeo de 175s —
+    a gravação simplesmente parou sozinha ANTES da navegação acontecer,
+    sem erro nenhum). Força o MÁXIMO permitido por cada driver: 600s (10min)
+    no iOS, 180s no Android (limite rígido do próprio `adb screenrecord` —
+    não dá pra passar disso numa gravação só; uma exploração Android bem
+    longa ainda pode perder o final do vídeo, limitação conhecida sem
+    solução simples aqui — encadear gravações é bem mais complexo e fica
+    fora do escopo por ora)."""
     assert resources.mobile_session is not None
+    session = resources.mobile_session
     try:
-        await asyncio.to_thread(resources.mobile_session.driver.start_recording_screen)
+        if session.platform == "ios":
+            await asyncio.to_thread(
+                session.driver.start_recording_screen,
+                videoType="libx264",
+                pixelFormat="yuv420p",
+                timeLimit=_IOS_RECORDING_TIME_LIMIT_SECONDS,
+            )
+        else:
+            await asyncio.to_thread(
+                session.driver.start_recording_screen, timeLimit=_ANDROID_RECORDING_TIME_LIMIT_SECONDS
+            )
         resources.mobile_recording_started = True
     except Exception as e:
         logger.warning("Falha ao iniciar gravação de tela (run %s): %s", run_id, e)
@@ -605,6 +644,44 @@ async def _save_web_video_evidence(run_id: str, video: Any) -> None:
         logger.warning("Falha ao salvar o vídeo da exploração web (run %s): %s", run_id, e)
 
 
+def _remux_faststart(path: Path) -> None:
+    """`adb screenrecord`/`simctl io recordVideo` gravam o átomo `moov` (o
+    índice com a duração/posição dos frames) no FIM do arquivo — não sabem
+    a duração total até a gravação parar. Um `<video>` de browser tocando
+    via streaming progressivo (nosso endpoint `/api/evidences/{id}`, que já
+    suporta Range) precisa do `moov` no INÍCIO pra sequer começar a decodar
+    — sem isso, fica preso pra sempre em "carregando" mesmo recebendo dados
+    (achado ao vivo: o Chrome fazia as requisições Range certinho, mas o
+    player nunca saía do estado `HAVE_NOTHING`). Remuxa só o container
+    (`-c copy`, sem reencode — rápido, sem perda) com `ffmpeg -movflags
+    +faststart`. Best-effort: se o ffmpeg não estiver instalado ou a
+    chamada falhar, mantém o arquivo cru — a evidência ainda fica salva e
+    baixável (`Baixar artefatos`), só não toca direto no navegador.
+
+    Rede de segurança independente do CODEC (que é o outro problema real
+    que o navegador tinha com o vídeo — ver `_maybe_start_mobile_recording`,
+    que força H.264 no iOS): mesmo com um codec suportado, nada garante que
+    o `moov` já venha no início por padrão."""
+    if not shutil.which("ffmpeg"):
+        logger.warning(
+            "ffmpeg não encontrado — vídeo da exploração salvo sem remux 'faststart' "
+            "(pode não tocar direto no navegador; ainda dá pra baixar e abrir num player local)."
+        )
+        return
+    tmp_path = path.with_suffix(".faststart.mp4")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(path), "-c", "copy", "-movflags", "+faststart", str(tmp_path)],
+            capture_output=True,
+            timeout=60,
+            check=True,
+        )
+        tmp_path.replace(path)
+    except Exception as e:
+        logger.warning("Falha ao remuxar o vídeo da exploração pra 'faststart' (mantendo arquivo original): %s", e)
+        tmp_path.unlink(missing_ok=True)
+
+
 async def _save_mobile_video_evidence(run_id: str, session: MobileSession) -> None:
     """Precisa rodar ANTES de `_safe_close_mobile` (que dá `driver.quit()`) —
     ao contrário do lado web, aqui a gravação precisa ser parada enquanto a
@@ -615,6 +692,7 @@ async def _save_mobile_video_evidence(run_id: str, session: MobileSession) -> No
         video_dir.mkdir(parents=True, exist_ok=True)
         path = video_dir / "exploracao.mp4"
         path.write_bytes(base64.b64decode(b64_video))
+        await asyncio.to_thread(_remux_faststart, path)
         store.add_evidence(run_id, None, "video", "Exploração", str(path))
     except Exception as e:
         logger.warning("Falha ao salvar o vídeo da exploração mobile (run %s): %s", run_id, e)

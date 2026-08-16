@@ -75,6 +75,7 @@ def run_checks() -> list[CheckResult]:
         _check_binary("emulator", ["-version"]),
         _check_binary("xcrun", None),
         _check_binary("appium", ["--version"]),
+        _check_binary("ffmpeg", ["-version"]),
     ]
 
 

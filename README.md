@@ -110,7 +110,7 @@ Or both plus the Vite dev server together, from a development checkout:
 ./scripts/dev.sh
 ```
 
-`GET /api/health` (and `uv run argus-doctor`, same logic) reports the state of every native dependency — database, disk, Playwright, `adb`/`emulator`, `xcrun`, Appium.
+`GET /api/health` (and `uv run argus-doctor`, same logic) reports the state of every native dependency — database, disk, Playwright, `adb`/`emulator`, `xcrun`, Appium, `ffmpeg` (remuxes mobile Explore-mode session videos to "faststart" so they stream in the browser right after recording — see `_remux_faststart` in `src/agent/nodes.py`; missing `ffmpeg` degrades gracefully, the video is still saved and downloadable, just not playable inline).
 
 ## 🔁 LaunchAgents (start on login)
 

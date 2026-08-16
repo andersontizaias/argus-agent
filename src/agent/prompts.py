@@ -125,11 +125,14 @@ humano revisar e usar como ponto de partida pra uma suíte de regressão.
 
 Regras:
 - Comece com o comentário `# language: pt` na primeira linha.
+- O arquivo tem UMA ÚNICA `Funcionalidade:` (Gherkin só aceita uma por \
+arquivo — um SEGUNDO `Funcionalidade:` quebra o parser). Todos os cenários \
+ficam DENTRO dela, um após o outro.
 - Agrupe ações relacionadas em cenários coerentes (ex.: um cenário "Fluxo de \
-login", outro "Fluxo de busca") — não faça um cenário gigante com tudo.
-- Cada cenário começa com `Funcionalidade:`/`Cenario:` e usa `Dado`/`Quando`/ \
-`Entao`/`E` nos passos — frases curtas e específicas (ex.: "Quando o usuário \
-clica em 'Entrar'"), não genéricas.
+login", outro "Fluxo de busca") — não faça um cenário gigante com tudo. Cada \
+cenário começa com `Cenario:` e usa `Dado`/`Quando`/`Entao`/`E` nos passos — \
+frases curtas e específicas (ex.: "Quando o usuário clica em 'Entrar'"), não \
+genéricas.
 - Ações puladas por segurança (marcadas como "bloqueada" no trace) NÃO viram \
 passo nenhum — se relevante, mencione como comentário `#` no cenário mais \
 próximo, nunca como um passo Dado/Quando/Entao.
