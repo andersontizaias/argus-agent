@@ -4,7 +4,7 @@
 
 # 👁️ Argus Agent
 
-**Agente de QA autônomo** com persona de "QA sênior extremamente eficiente" — executa testes de aplicações **web**, **Android** e **iOS** a partir de um script BDD (Gherkin) e uma massa de testes, dirigindo a aplicação de verdade (Playwright para web, Appium para mobile) e produzindo relatórios com evidências por cenário.
+**Agente de QA autônomo** com persona de "QA sênior extremamente eficiente" — executa testes de aplicações **web**, **Android** e **iOS** a partir de um script BDD (Gherkin) e uma massa de testes, dirigindo a aplicação de verdade (Playwright para web, Appium para mobile) e produzindo relatórios com evidências por cenário. Pra projetos que ainda não têm cobertura nenhuma, o **modo Explorar** inverte isso: aponte o Argus pra aplicação sem script nenhum e ele navega sozinho, depois gera um `.feature` candidato (mais um vídeo da sessão) pra dar um ponta pé inicial numa suíte de regressão.
 
 ![CI](https://github.com/andersontizaias/argus-agent/actions/workflows/ci.yml/badge.svg)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue?logo=python)
@@ -30,6 +30,7 @@
 - [🔁 LaunchAgents (subir sozinho no login)](#-launchagents-subir-sozinho-no-login)
 - [📖 Uso](#-uso)
   - [📱 Binários mobile](#-binários-mobile)
+  - [🧭 Modo Explorar](#-modo-explorar)
   - [📡 API REST](#-api-rest)
   - [🔌 MCP](#-mcp)
   - [🤝 A2A](#-a2a)
@@ -51,7 +52,7 @@ Pra notas de arquitetura e decisões de design, veja [`PLANO.md`](./PLANO.md) *(
 
 - **Backend**: Python 3.12, FastAPI, SQLAlchemy + Alembic (SQLite WAL), LangGraph
 - **Frontend**: React 19, Vite, TypeScript, Tailwind v4
-- **Automação**: Playwright (web), Appium — UiAutomator2 (Android) e XCUITest (iOS)
+- **Automação**: Playwright (web), Appium — UiAutomator2 (Android) e XCUITest (iOS), ffmpeg (remuxa os vídeos de sessão mobile do modo Explorar pra tocar no navegador)
 - **Integração**: API REST (`X-API-Key`), MCP (Streamable HTTP em `/mcp`), A2A (`/a2a` + AgentCard)
 
 ## 📦 Instalação
@@ -110,7 +111,7 @@ Ou os dois + o Vite dev server juntos, num checkout de desenvolvimento:
 ./scripts/dev.sh
 ```
 
-`GET /api/health` (e `uv run argus-doctor` na mesma lógica) reporta o estado de cada dependência nativa — banco, disco, Playwright, `adb`/`emulator`, `xcrun`, Appium.
+`GET /api/health` (e `uv run argus-doctor` na mesma lógica) reporta o estado de cada dependência nativa — banco, disco, Playwright, `adb`/`emulator`, `xcrun`, Appium, `ffmpeg` (remuxa os vídeos de sessão mobile do modo Explorar pra "faststart" logo depois de gravar, pra tocar direto no navegador — ver `_remux_faststart` em `src/agent/nodes.py`; sem `ffmpeg`, a run continua normal, o vídeo fica salvo e baixável, só não toca inline).
 
 ## 🔁 LaunchAgents (subir sozinho no login)
 
@@ -135,9 +136,21 @@ O campo `binary_url` (runs Android/iOS) aceita uma URL `http(s)` de verdade — 
 - **iOS**: um `.zip` contendo um build de **Simulador** do `.app` (`Payload/<Nome>.app/`), não um `.ipa` de dispositivo — só Simulador é suportado por enquanto, nada de aparelho físico. O que importa é o conteúdo, não a extensão do arquivo: o `Info.plist` do `.app` precisa ter `iPhoneSimulator` em `CFBundleSupportedPlatforms`, então um zip nomeado `.ipa` funciona numa boa desde que o que está dentro tenha sido buildado com o SDK de Simulador. A maioria dos `.ipa` que você já tem por aí (TestFlight, App Store, Ad Hoc) são builds de dispositivo e são rejeitados com um erro claro, em vez de falhar de forma críptica no meio da run.
   Jeito típico de gerar um: `xcodebuild ... -sdk iphonesimulator -derivedDataPath build` (ou `fastlane gym`/`build_app` com `destination: "generic/platform=iOS Simulator"`, `skip_package_ipa: true`), depois zipa o resultado: `ditto -c -k --sequesterRsrc --keepParent build/.../SeuApp.app SeuApp.zip`.
 
+### 🧭 Modo Explorar
+
+Pra um projeto que ainda não tem cobertura BDD nenhuma, **Nova Execução → Modo → Explorar** pula o script inteiro: aponte pra uma URL web ou um binário mobile, confirme a caixinha de que o alvo **não é produção** (obrigatória — o Argus age sozinho, sem um passo escrito por humano pra seguir), e ele navega a aplicação por conta própria, uma ação de cada vez, decidindo o que clicar/tocar/preencher com base no que está na tela. Quando esgota o que há de novo pra explorar (ou bate no orçamento de ações, padrão 25, máximo 100), uma chamada de síntese separada transforma o trace num `.feature` candidato (validado pelo mesmo parser Gherkin usado pras runs normais) pra você revisar, editar e reaproveitar como uma run comum de modo Executar (**Usar em Nova Execução**, na página de Detalhe da Run, já pré-preenche o script).
+
+Também fica gravado um vídeo da sessão inteira (gravador nativo do Playwright no web; `start_recording_screen` do Appium no mobile, forçado pra `libx264`/`yuv420p` e remuxado "faststart" depois de salvo — ver `_maybe_start_mobile_recording`/`_remux_faststart` em `src/agent/nodes.py` — pra tocar direto no navegador em vez de só depois de um download completo) — útil pra conferir visualmente o que o agente realmente fez, além do que entrou no `.feature`.
+
+Os guardrails são aplicados em **código**, não só via instrução de prompt: um denylist bloqueia tocar/clicar em qualquer coisa que pareça uma ação com efeito real (excluir, pagar, enviar, finalizar compra, cancelar assinatura — pt+en), e a navegação web fica restrita à origem inicial da run. Uma ação bloqueada vira uma nota de "pulado por segurança" no script gerado, em vez de derrubar a run silenciosamente.
+
+A qualidade da exploração acompanha mais a confiabilidade do LLM como agente do que sua capacidade bruta — um modelo pequeno/local (ex.: Ollama) tende a ficar preso na mesma tela ou julgar errado se um toque teve efeito com bem mais frequência que um modelo hospedado de ponta; se o script gerado parecer raso demais, o fix costuma ser um provider mais forte, não um orçamento de ações maior. `mode`/`max_actions`/`confirmed_non_production` são só da API REST por enquanto — o `run_test` do MCP e a skill do A2A ainda cobrem só o modo Executar.
+
 ### 📡 API REST
 
 `POST /api/runs` · `GET /api/runs` · `GET /api/runs/{id}` · `POST /api/runs/{id}/cancel` · `GET /api/runs/{id}/stream` (SSE) · `GET /api/runs/{id}/report[.html]` · `GET /api/runs/{id}/artifacts.zip` · `GET /api/evidences/{id}` · `POST /api/binaries/upload` · `GET`/`POST /api/config` · `POST /api/config/test-llm-provider/{id}` · CRUD `/api/api-keys` · `GET /api/health`.
+
+Corpo de `POST /api/runs`: `platform`, `mode` (`"execute"` por padrão, ou `"explore"` — ver [Modo Explorar](#-modo-explorar)), `bdd_script`/`test_data` (obrigatórios em `execute`, omitidos em `explore`), `app_url`/`binary_url`/`binary_auth_secret`, `llm_provider`/`llm_model` (cai no default configurado se omitidos) e, pra `explore`: `max_actions` (1–100, padrão 25) e `confirmed_non_production` (precisa ser `true`).
 
 Autenticação por `X-API-Key: argus_<prefix>_<random>` (exibida uma vez na criação). Fluxo típico de CI: `POST /api/runs` → poll/SSE → exit code pelo `status` final → baixa `report.json`.
 
@@ -161,7 +174,7 @@ Providers de LLM, secrets de binário e retenção de relatórios (`retention_da
 
 ## 📊 Relatórios
 
-`~/.argus/artifacts/{run_id}/`: `report.json`, `report.html` (abre offline), `screenshots/`, `logs/agent.log` (massa de testes redigida — valores viram `***`). Cada relatório traz tokens de entrada/saída e custo estimado da run. Runs terminadas mais antigas que a retenção configurada são apagadas automaticamente pelo worker.
+`~/.argus/artifacts/{run_id}/`: `report.json`, `report.html` (abre offline), `screenshots/`, `logs/agent.log` (massa de testes redigida — valores viram `***`). Cada relatório traz tokens de entrada/saída e custo estimado da run. Runs em modo Explorar ganham também `video/exploracao.mp4` (a gravação da sessão, ver [Modo Explorar](#-modo-explorar)) e o texto do `.feature` gerado, ambos mostrados no relatório e na página de Detalhe da Run em vez de uma lista de cenários. Runs terminadas mais antigas que a retenção configurada são apagadas automaticamente pelo worker.
 
 ## 🧪 Testes
 
