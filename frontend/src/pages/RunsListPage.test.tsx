@@ -13,6 +13,7 @@ function makeRun(overrides: Partial<RunSummary> = {}): RunSummary {
   return {
     id: 'run-1',
     platform: 'web',
+    mode: 'execute',
     app_url: 'https://example.com',
     binary_url: null,
     status: 'passed',
@@ -26,6 +27,8 @@ function makeRun(overrides: Partial<RunSummary> = {}): RunSummary {
     tokens_in: 0,
     tokens_out: 0,
     cost_usd: 0,
+    max_actions: 25,
+    generated_bdd_script: null,
     created_at: '2026-01-01T00:00:00',
     started_at: null,
     finished_at: null,

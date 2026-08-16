@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,8 +7,9 @@ import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
 import { useCancelRun, useRun } from '@/lib/queries';
 import { useRunStream } from '@/lib/useRunStream';
+import type { RunStreamLogEntry } from '@/lib/useRunStream';
 import { TERMINAL_RUN_STATUSES } from '@/types/api';
-import type { RunStatus, Scenario, ScenarioStatus, Step, StepStatus } from '@/types/api';
+import type { RunDetail, RunStatus, Scenario, ScenarioStatus, Step, StepStatus } from '@/types/api';
 
 const STATUS_VARIANT: Record<RunStatus | ScenarioStatus | StepStatus, 'default' | 'good' | 'warn' | 'destructive'> = {
   queued: 'default',
@@ -60,6 +61,81 @@ function ScenarioCard({ scenario }: { scenario: Scenario }) {
         ))}
       </CardContent>
     </Card>
+  );
+}
+
+/** Substitui a lista de cenários pra runs mode="explore" — sem passo dado
+ * por um humano, o que existe é o vídeo da sessão, o trace de ações (via
+ * eventos SSE explore_action) e o .feature CANDIDATO gerado ao final, não
+ * um veredito passou/falhou por cenário. */
+function ExploreSection({ run, log }: { run: RunDetail; log: RunStreamLogEntry[] }) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const videoEvidence = run.evidences.find((e) => e.type === 'video');
+  const actions = log.filter((entry) => entry.type === 'explore_action');
+
+  async function handleCopy() {
+    if (!run.generated_bdd_script) return;
+    try {
+      await navigator.clipboard.writeText(run.generated_bdd_script);
+      toast.success(t('runDetail.copied'));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function handleUseInNewRun() {
+    navigate('/runs/new', { state: { prefillBddScript: run.generated_bdd_script } });
+  }
+
+  return (
+    <div className="space-y-4">
+      {videoEvidence && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t('runDetail.explorationVideo')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <video src={api.evidenceUrl(videoEvidence.id)} controls className="w-full max-w-xl rounded border border-border" />
+          </CardContent>
+        </Card>
+      )}
+
+      {actions.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t('runDetail.explorationTrace')}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            {actions.map((entry, i) => (
+              <div key={i} className="border-l-2 border-border pl-3 py-1 text-sm">
+                {String(entry.description ?? '')}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {run.generated_bdd_script ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t('runDetail.generatedScript')}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">{t('runDetail.generatedScriptHelp')}</p>
+            <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-[hsl(var(--input))] p-3 font-mono text-xs">
+              {run.generated_bdd_script}
+            </pre>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={handleCopy}>{t('runDetail.copyScript')}</Button>
+              <Button variant="outline" size="sm" onClick={handleUseInNewRun}>{t('runDetail.useInNewRun')}</Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <p className="text-sm text-muted-foreground">{t('runDetail.exploring')}</p>
+      )}
+    </div>
   );
 }
 
@@ -131,7 +207,11 @@ export function RunDetailPage() {
         <CardContent className="grid grid-cols-2 gap-3 pt-6 text-sm sm:grid-cols-4">
           <div><span className="text-muted-foreground">{t('newRun.platform')}: </span>{run.platform}</div>
           <div><span className="text-muted-foreground">Provider: </span>{run.llm_provider}/{run.llm_model}</div>
-          <div><span className="text-muted-foreground">{t('runsList.scenarios')}: </span>{run.scenarios_passed}/{run.scenarios_total}</div>
+          {run.mode === 'explore' ? (
+            <div><span className="text-muted-foreground">{t('newRun.mode')}: </span>{t('newRun.modeExplore')}</div>
+          ) : (
+            <div><span className="text-muted-foreground">{t('runsList.scenarios')}: </span>{run.scenarios_passed}/{run.scenarios_total}</div>
+          )}
           <div><span className="text-muted-foreground">Custo: </span>${run.cost_usd.toFixed(4)}</div>
         </CardContent>
       </Card>
@@ -144,14 +224,18 @@ export function RunDetailPage() {
         </Card>
       )}
 
-      <div className="space-y-4">
-        {run.scenarios.map((scenario) => (
-          <ScenarioCard key={scenario.id} scenario={scenario} />
-        ))}
-        {run.scenarios.length === 0 && (
-          <p className="text-muted-foreground text-sm">{t('runDetail.noScenariosYet')}</p>
-        )}
-      </div>
+      {run.mode === 'explore' ? (
+        <ExploreSection run={run} log={log} />
+      ) : (
+        <div className="space-y-4">
+          {run.scenarios.map((scenario) => (
+            <ScenarioCard key={scenario.id} scenario={scenario} />
+          ))}
+          {run.scenarios.length === 0 && (
+            <p className="text-muted-foreground text-sm">{t('runDetail.noScenariosYet')}</p>
+          )}
+        </div>
+      )}
 
       {log.length > 0 && (
         <Card>

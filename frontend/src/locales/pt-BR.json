@@ -46,6 +46,16 @@
   "newRun": {
     "title": "Nova Execução",
     "subtitle": "Configure o alvo e o script BDD que o Argus vai executar.",
+    "mode": "Modo",
+    "modeExecute": "Executar",
+    "modeExplore": "Explorar",
+    "modeExecuteHelp": "Roda um script BDD que você já escreveu.",
+    "modeExploreHelp": "Sem script — o Argus navega sozinho, descobre fluxos e gera um script Gherkin candidato ao final, pra você revisar. Use só contra ambientes de teste/staging.",
+    "exploreSettings": "Configuração da exploração",
+    "maxActions": "Orçamento de ações",
+    "maxActionsHelp": "Quantas ações no máximo o agente pode tomar antes de encerrar a exploração (entre 1 e 100).",
+    "confirmNonProduction": "Confirmo que este NÃO é um ambiente de produção — o Argus vai navegar e agir sozinho, sem um passo pra seguir.",
+    "confirmNonProductionRequired": "Confirme que o alvo não é produção antes de explorar.",
     "target": "Alvo do teste",
     "platform": "Plataforma",
     "appUrl": "URL da aplicação",
@@ -93,6 +103,14 @@
     "exportPdf": "Exportar PDF",
     "downloadArtifacts": "Baixar artefatos (.zip)",
     "noScenariosYet": "Ainda não há cenários — a run está sendo processada.",
-    "eventLog": "Log de eventos"
+    "eventLog": "Log de eventos",
+    "explorationVideo": "Vídeo da exploração",
+    "explorationTrace": "Ações da exploração",
+    "generatedScript": "Script Gherkin gerado",
+    "generatedScriptHelp": "Candidato gerado automaticamente a partir da exploração — revise antes de usar como run de regressão.",
+    "copyScript": "Copiar",
+    "copied": "Copiado.",
+    "useInNewRun": "Usar em Nova Execução",
+    "exploring": "Explorando... o script aparece aqui quando a exploração terminar."
   }
 }

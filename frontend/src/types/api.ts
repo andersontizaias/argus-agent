@@ -44,6 +44,7 @@ export interface LlmProviderTestResult {
 }
 
 export type RunPlatform = 'web' | 'android' | 'ios';
+export type RunMode = 'execute' | 'explore';
 export type RunStatus = 'queued' | 'provisioning' | 'running' | 'passed' | 'failed' | 'error' | 'canceled';
 export type ScenarioStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
 export type StepStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
@@ -83,6 +84,7 @@ export interface Scenario {
 export interface RunSummary {
   id: string;
   platform: RunPlatform;
+  mode: RunMode;
   app_url: string | null;
   binary_url: string | null;
   status: RunStatus;
@@ -96,6 +98,9 @@ export interface RunSummary {
   tokens_in: number;
   tokens_out: number;
   cost_usd: number;
+  // Só usados por mode="explore" — ver src/run_service.py:run_summary_dict.
+  max_actions: number;
+  generated_bdd_script: string | null;
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -105,6 +110,9 @@ export interface RunDetail extends RunSummary {
   bdd_script: string;
   test_data_keys: string[];
   scenarios: Scenario[];
+  // Evidência de nível de run, sem step_id específico — ex.: o vídeo da
+  // sessão de exploração inteira (mode="explore").
+  evidences: EvidenceRef[];
 }
 
 export interface RunsPage {
@@ -116,13 +124,17 @@ export interface RunsPage {
 
 export interface RunCreateRequest {
   platform: RunPlatform;
+  mode?: RunMode;
   app_url?: string;
   binary_url?: string;
   binary_auth_secret?: string;
-  bdd_script: string;
+  bdd_script?: string;
   test_data?: Record<string, string>;
   llm_provider?: string;
   llm_model?: string;
+  // Só usados por mode="explore".
+  max_actions?: number;
+  confirmed_non_production?: boolean;
 }
 
 export interface ApiKeySummary {

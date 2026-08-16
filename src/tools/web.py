@@ -13,10 +13,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from langchain_core.tools import tool
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
+
+from src.tools.explore_guardrails import DANGEROUS_ACTION_REFUSAL, is_dangerous_action
 
 _SNAPSHOT_JS = """
 () => {
@@ -117,6 +120,11 @@ class WebSession:
     artifacts_dir: Path
     scenario_position: int = field(default=0)
     step_position: int = field(default=0)
+    # Ref -> {ref, role, name, disabled} do último snapshot — usado só pelo
+    # modo "explore" (src/tools/explore_guardrails.py) pra checar o nome/role
+    # do elemento-alvo ANTES de agir, sem depender do LLM autorrelatar o que
+    # está prestes a clicar.
+    last_elements: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def set_step_context(self, scenario_position: int, step_position: int) -> None:
         self.scenario_position = scenario_position
@@ -124,6 +132,7 @@ class WebSession:
 
     async def snapshot_text(self) -> str:
         elements = await self._evaluate_with_retry()
+        self.last_elements = {el["ref"]: el for el in elements}
         url = self.page.url
         title = await self.page.title()
         lines = [f"URL: {url}", f'Título: "{title}"', ""]
@@ -133,6 +142,14 @@ class WebSession:
             state = " [desabilitado]" if el.get("disabled") else ""
             lines.append(f'[{el["ref"]}] {el["role"]} "{el["name"]}"{state}')
         return "\n".join(lines)
+
+    def element_label(self, ref: str) -> str:
+        """`'{role} \"{name}\"'` do último snapshot pra essa ref, ou a ref
+        crua se não achar (elemento agiu antes de um snapshot, ref obsoleta
+        — nesse caso o próprio click/fill abaixo já vai falhar por conta
+        própria com uma mensagem clara)."""
+        el = self.last_elements.get(ref)
+        return f'{el["role"]} "{el["name"]}"' if el else ref
 
     async def _evaluate_with_retry(self) -> list[dict[str, Any]]:
         """`page.evaluate` pode disparar "Execution context was destroyed,
@@ -321,4 +338,113 @@ def build_web_tools(session: WebSession) -> list:
         browser_screenshot,
         browser_back,
         browser_get_url,
+    ]
+
+
+def build_explore_web_tools(session: WebSession, allowed_origin: str) -> list:
+    """Mesma fábrica de `build_web_tools`, com dois guardrails EM CÓDIGO
+    aplicados antes de agir — obrigatórios só no modo "explore" (o agente
+    escolhe as próprias ações, sem um passo determinado por um humano pra
+    seguir): ver docstring de src/tools/explore_guardrails.py.
+
+    - `browser_navigate` recusa qualquer URL de origem diferente de
+      `allowed_origin` (a origem da run) — evita sair pro gateway de
+      pagamento de verdade, um provedor de e-mail externo, etc.
+    - `browser_click` recusa um alvo cujo nome/role bate no denylist de
+      ações perigosas."""
+
+    def _same_origin(url: str) -> bool:
+        try:
+            return urlparse(url).netloc == urlparse(allowed_origin).netloc
+        except ValueError:
+            return False
+
+    @tool
+    async def browser_navigate(url: str) -> str:
+        """Navega para uma URL (só dentro da mesma origem da run — bloqueado
+        em qualquer outra) e devolve o snapshot da página resultante."""
+        if not _same_origin(url):
+            return f"Navegação bloqueada por segurança no modo exploração — fora da origem da run ({allowed_origin})."
+        try:
+            return await session.navigate(url)
+        except Exception as e:
+            return f"Erro ao navegar: {e}"
+
+    @tool
+    async def browser_snapshot() -> str:
+        """Tira um snapshot de acessibilidade da página atual: lista os
+        elementos interativos visíveis com uma ref curta (ex.: [e3] button
+        "Entrar"). Use antes de clicar/preencher para saber as refs atuais —
+        elas mudam a cada navegação ou mudança relevante na página."""
+        return await session.snapshot_text()
+
+    @tool
+    async def browser_click(ref: str) -> str:
+        """Clica no elemento identificado pela ref (ex.: "e3"), obtida de um
+        browser_snapshot anterior. Recusa alvos que pareçam iniciar uma ação
+        com efeito real (comprar, excluir, cancelar, enviar)."""
+        if is_dangerous_action(session.element_label(ref)):
+            return DANGEROUS_ACTION_REFUSAL
+        try:
+            return await session.click(ref)
+        except WebToolError as e:
+            return str(e)
+
+    @tool
+    async def browser_fill(ref: str, text: str) -> str:
+        """Preenche um campo de texto/senha identificado pela ref com o
+        valor informado. Use valores obviamente fictícios (ex.:
+        explorer+argus@example.com) — nunca dados reais."""
+        try:
+            return await session.fill(ref, text)
+        except WebToolError as e:
+            return str(e)
+
+    @tool
+    async def browser_select(ref: str, value: str) -> str:
+        """Seleciona uma opção (pelo value do <option>) num <select>
+        identificado pela ref."""
+        try:
+            return await session.select(ref, value)
+        except WebToolError as e:
+            return str(e)
+
+    @tool
+    async def browser_hover(ref: str) -> str:
+        """Passa o mouse sobre o elemento identificado pela ref (útil para
+        menus/tooltips que só aparecem no hover)."""
+        try:
+            return await session.hover(ref)
+        except WebToolError as e:
+            return str(e)
+
+    @tool
+    async def browser_scroll(direction: str) -> str:
+        """Rola a página na direção indicada ("down" ou "up")."""
+        return await session.scroll(direction)
+
+    @tool
+    async def browser_wait_for(text: str, timeout_ms: int = 8000) -> str:
+        """Espera até um texto aparecer visível na página (timeout em ms,
+        default 8000)."""
+        try:
+            return await session.wait_for(text, timeout_ms)
+        except WebToolError as e:
+            return str(e)
+
+    @tool
+    async def browser_back() -> str:
+        """Volta para a página anterior no histórico de navegação."""
+        return await session.back()
+
+    return [
+        browser_navigate,
+        browser_snapshot,
+        browser_click,
+        browser_fill,
+        browser_select,
+        browser_hover,
+        browser_scroll,
+        browser_wait_for,
+        browser_back,
     ]

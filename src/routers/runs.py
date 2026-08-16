@@ -32,13 +32,16 @@ _ALLOWED_BINARY_EXTENSIONS = {".apk", ".aab", ".ipa", ".zip"}
 
 class RunCreate(BaseModel):
     platform: str
+    mode: str = "execute"  # execute (padrão) | explore
     app_url: str | None = None
     binary_url: str | None = None
     binary_auth_secret: str | None = None
-    bdd_script: str
+    bdd_script: str = ""  # obrigatório só em mode="execute" (validado em run_service)
     test_data: dict[str, str] = {}
     llm_provider: str | None = None
     llm_model: str | None = None
+    max_actions: int | None = None  # só mode="explore" — default em run_service
+    confirmed_non_production: bool = False  # obrigatório True em mode="explore"
 
 
 def _scenario_dict(scenario: models.Scenario) -> dict:
@@ -72,11 +75,16 @@ def _step_dict(step: models.Step) -> dict:
 
 
 def _run_detail_dict(run: models.Run) -> dict:
+    # Evidência SEM step_id (ex.: vídeo da sessão de exploração inteira,
+    # ver src/agent/nodes.py:explore_app) não aparece em nenhum `_step_dict`
+    # acima — precisa de uma lista à parte, no nível da run.
+    run_level_evidences = [e for e in store.list_evidences(run.id) if e.step_id is None]
     return {
         **run_service.run_summary_dict(run),
         "bdd_script": run.bdd_script,
         "test_data_keys": sorted(store.get_run_test_data(run.id).keys()),
         "scenarios": [_scenario_dict(s) for s in store.list_scenarios(run.id)],
+        "evidences": [{"id": e.id, "type": e.type, "label": e.label} for e in run_level_evidences],
     }
 
 
@@ -138,6 +146,7 @@ async def create_run(payload: RunCreate):
     try:
         run = run_service.create_run(
             platform=payload.platform,
+            mode=payload.mode,
             bdd_script=payload.bdd_script,
             app_url=payload.app_url,
             binary_url=payload.binary_url,
@@ -145,6 +154,8 @@ async def create_run(payload: RunCreate):
             test_data=payload.test_data,
             llm_provider=payload.llm_provider,
             llm_model=payload.llm_model,
+            max_actions=payload.max_actions,
+            confirmed_non_production=payload.confirmed_non_production,
         )
     except run_service.RunServiceError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})

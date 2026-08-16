@@ -15,6 +15,14 @@ from src.llm_providers import default_model_setting_name, get_provider
 
 TERMINAL_STATUSES = {"passed", "failed", "error", "canceled"}
 VALID_PLATFORMS = {"web", "android", "ios"}
+VALID_MODES = {"execute", "explore"}
+
+# Orçamento de ações do modo "explore" (o agente navega sozinho, sem um
+# script pra seguir) — limite duro pra conter custo (chamadas de LLM) e o
+# raio de ação de um agente agindo contra uma aplicação de verdade sem
+# supervisão passo a passo. Ver docstring de src.agent.executor.
+DEFAULT_EXPLORE_MAX_ACTIONS = 25
+_MAX_EXPLORE_MAX_ACTIONS = 100
 
 
 class RunServiceError(ValueError):
@@ -30,27 +38,46 @@ class RunNotFoundError(LookupError):
 def create_run(
     *,
     platform: str,
-    bdd_script: str,
+    bdd_script: str = "",
     app_url: str | None = None,
     binary_url: str | None = None,
     binary_auth_secret: str | None = None,
     test_data: dict[str, str] | None = None,
     llm_provider: str | None = None,
     llm_model: str | None = None,
+    mode: str = "execute",
+    max_actions: int | None = None,
+    confirmed_non_production: bool = False,
 ) -> models.Run:
     if platform not in VALID_PLATFORMS:
         raise RunServiceError(f"Invalid platform: {platform}")
+    if mode not in VALID_MODES:
+        raise RunServiceError(f"Invalid mode: {mode}")
     if platform != "web" and not binary_url:
         raise RunServiceError(f"Platform '{platform}' requires binary_url.")
-    if not bdd_script.strip():
-        raise RunServiceError("Empty BDD script.")
 
-    test_data = test_data or {}
-    try:
-        scenarios = parse_bdd_script(bdd_script)
-        validate_test_data(scenarios, test_data)
-    except BddParseError as e:
-        raise RunServiceError(str(e)) from e
+    if mode == "execute":
+        if not bdd_script.strip():
+            raise RunServiceError("Empty BDD script.")
+        test_data = test_data or {}
+        try:
+            scenarios = parse_bdd_script(bdd_script)
+            validate_test_data(scenarios, test_data)
+        except BddParseError as e:
+            raise RunServiceError(str(e)) from e
+    else:
+        # "explore": sem script de entrada — o agente navega sozinho e
+        # PRODUZ um. Fricção deliberada: como é um agente agindo sem
+        # supervisão passo a passo contra uma aplicação de verdade, exige
+        # confirmação explícita de que não é produção (não é uma garantia
+        # técnica — não dá pra verificar isso de fato — é uma barreira
+        # proposital antes de deixar o agente agir sozinho).
+        if not confirmed_non_production:
+            raise RunServiceError(
+                "Explore mode requires confirmed_non_production=true — confirm this target isn't production."
+            )
+        bdd_script = ""
+        test_data = test_data or {}
 
     resolved_provider = llm_provider or store.get_setting("default_llm_provider")
     provider = get_provider(resolved_provider) if resolved_provider else None
@@ -61,8 +88,13 @@ def create_run(
     # default perderia o modelo configurado dos outros.
     resolved_model = llm_model or store.get_setting(default_model_setting_name(provider))
 
+    resolved_max_actions = DEFAULT_EXPLORE_MAX_ACTIONS if max_actions is None else max_actions
+    if mode == "explore" and not (1 <= resolved_max_actions <= _MAX_EXPLORE_MAX_ACTIONS):
+        raise RunServiceError(f"max_actions must be between 1 and {_MAX_EXPLORE_MAX_ACTIONS}.")
+
     return store.create_run(
         platform=platform,
+        mode=mode,
         app_url=app_url,
         binary_url=binary_url,
         binary_auth_secret=binary_auth_secret,
@@ -70,6 +102,8 @@ def create_run(
         test_data=test_data,
         llm_provider=resolved_provider,
         llm_model=resolved_model,
+        max_actions=resolved_max_actions,
+        confirmed_non_production=confirmed_non_production,
     )
 
 
@@ -86,6 +120,7 @@ def run_summary_dict(run: models.Run) -> dict:
     return {
         "id": run.id,
         "platform": run.platform,
+        "mode": run.mode,
         "app_url": run.app_url,
         "binary_url": run.binary_url,
         "status": run.status,
@@ -99,6 +134,8 @@ def run_summary_dict(run: models.Run) -> dict:
         "tokens_in": run.tokens_in,
         "tokens_out": run.tokens_out,
         "cost_usd": run.cost_usd,
+        "max_actions": run.max_actions,
+        "generated_bdd_script": run.generated_bdd_script,
         "created_at": run.created_at.isoformat() if run.created_at else None,
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
