@@ -12,7 +12,10 @@ relatório quanto pra retomar uma run interrompida."""
 import asyncio
 import base64
 import logging
+import shutil
+import subprocess
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from appium import webdriver
@@ -605,6 +608,39 @@ async def _save_web_video_evidence(run_id: str, video: Any) -> None:
         logger.warning("Falha ao salvar o vídeo da exploração web (run %s): %s", run_id, e)
 
 
+def _remux_faststart(path: Path) -> None:
+    """`adb screenrecord`/`simctl io recordVideo` gravam o átomo `moov` (o
+    índice com a duração/posição dos frames) no FIM do arquivo — não sabem
+    a duração total até a gravação parar. Um `<video>` de browser tocando
+    via streaming progressivo (nosso endpoint `/api/evidences/{id}`, que já
+    suporta Range) precisa do `moov` no INÍCIO pra sequer começar a decodar
+    — sem isso, fica preso pra sempre em "carregando" mesmo recebendo dados
+    (achado ao vivo: o Chrome fazia as requisições Range certinho, mas o
+    player nunca saía do estado `HAVE_NOTHING`). Remuxa só o container
+    (`-c copy`, sem reencode — rápido, sem perda) com `ffmpeg -movflags
+    +faststart`. Best-effort: se o ffmpeg não estiver instalado ou a
+    chamada falhar, mantém o arquivo cru — a evidência ainda fica salva e
+    baixável (`Baixar artefatos`), só não toca direto no navegador."""
+    if not shutil.which("ffmpeg"):
+        logger.warning(
+            "ffmpeg não encontrado — vídeo da exploração salvo sem remux 'faststart' "
+            "(pode não tocar direto no navegador; ainda dá pra baixar e abrir num player local)."
+        )
+        return
+    tmp_path = path.with_suffix(".faststart.mp4")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(path), "-c", "copy", "-movflags", "+faststart", str(tmp_path)],
+            capture_output=True,
+            timeout=60,
+            check=True,
+        )
+        tmp_path.replace(path)
+    except Exception as e:
+        logger.warning("Falha ao remuxar o vídeo da exploração pra 'faststart' (mantendo arquivo original): %s", e)
+        tmp_path.unlink(missing_ok=True)
+
+
 async def _save_mobile_video_evidence(run_id: str, session: MobileSession) -> None:
     """Precisa rodar ANTES de `_safe_close_mobile` (que dá `driver.quit()`) —
     ao contrário do lado web, aqui a gravação precisa ser parada enquanto a
@@ -615,6 +651,7 @@ async def _save_mobile_video_evidence(run_id: str, session: MobileSession) -> No
         video_dir.mkdir(parents=True, exist_ok=True)
         path = video_dir / "exploracao.mp4"
         path.write_bytes(base64.b64decode(b64_video))
+        await asyncio.to_thread(_remux_faststart, path)
         store.add_evidence(run_id, None, "video", "Exploração", str(path))
     except Exception as e:
         logger.warning("Falha ao salvar o vídeo da exploração mobile (run %s): %s", run_id, e)
