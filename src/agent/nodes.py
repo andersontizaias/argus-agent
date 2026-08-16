@@ -584,6 +584,10 @@ async def _synthesize_with_validation(*, chat_model, trace: list[str], platform:
         )
 
 
+_IOS_RECORDING_TIME_LIMIT_SECONDS = 600  # máximo aceito pelo driver XCUITest
+_ANDROID_RECORDING_TIME_LIMIT_SECONDS = 180  # máximo aceito por `adb screenrecord` — não dá pra passar disso numa única gravação
+
+
 async def _maybe_start_mobile_recording(resources: "_RunResources", run_id: str) -> None:
     """Best-effort — falhar ao iniciar a gravação não deve impedir a
     exploração de rodar. `resources.mobile_recording_started` fica False se
@@ -598,16 +602,32 @@ async def _maybe_start_mobile_recording(resources: "_RunResources", run_id: str)
     Força `libx264` (H.264, suportado universalmente) — a própria doc do
     Appium recomenda `pixelFormat="yuv420p"` junto pra compatibilidade
     ampla de player. Android já grava em H.264 nativamente via `adb
-    screenrecord` (não tem essa opção — nem precisa)."""
+    screenrecord` (não tem essa opção — nem precisa).
+
+    `timeLimit` do driver tem DEFAULT de 180s (3min) nos dois SOs — bem
+    menos que uma exploração de verdade costuma levar (achado ao vivo: uma
+    run que só chegou no dashboard aos ~4min13s teve um vídeo de 175s —
+    a gravação simplesmente parou sozinha ANTES da navegação acontecer,
+    sem erro nenhum). Força o MÁXIMO permitido por cada driver: 600s (10min)
+    no iOS, 180s no Android (limite rígido do próprio `adb screenrecord` —
+    não dá pra passar disso numa gravação só; uma exploração Android bem
+    longa ainda pode perder o final do vídeo, limitação conhecida sem
+    solução simples aqui — encadear gravações é bem mais complexo e fica
+    fora do escopo por ora)."""
     assert resources.mobile_session is not None
     session = resources.mobile_session
     try:
         if session.platform == "ios":
             await asyncio.to_thread(
-                session.driver.start_recording_screen, videoType="libx264", pixelFormat="yuv420p"
+                session.driver.start_recording_screen,
+                videoType="libx264",
+                pixelFormat="yuv420p",
+                timeLimit=_IOS_RECORDING_TIME_LIMIT_SECONDS,
             )
         else:
-            await asyncio.to_thread(session.driver.start_recording_screen)
+            await asyncio.to_thread(
+                session.driver.start_recording_screen, timeLimit=_ANDROID_RECORDING_TIME_LIMIT_SECONDS
+            )
         resources.mobile_recording_started = True
     except Exception as e:
         logger.warning("Falha ao iniciar gravação de tela (run %s): %s", run_id, e)

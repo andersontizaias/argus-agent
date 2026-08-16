@@ -17,6 +17,8 @@ import subprocess
 import pytest
 
 from src.agent.nodes import (
+    _ANDROID_RECORDING_TIME_LIMIT_SECONDS,
+    _IOS_RECORDING_TIME_LIMIT_SECONDS,
     _maybe_start_mobile_recording,
     _remux_faststart,
     _RunResources,
@@ -148,12 +150,15 @@ async def test_maybe_start_mobile_recording_forces_h264_on_ios(tmp_path):
     await _maybe_start_mobile_recording(resources, "run-1")
 
     assert resources.mobile_recording_started is True
-    assert driver.calls == [{"videoType": "libx264", "pixelFormat": "yuv420p"}]
+    assert driver.calls == [
+        {"videoType": "libx264", "pixelFormat": "yuv420p", "timeLimit": _IOS_RECORDING_TIME_LIMIT_SECONDS}
+    ]
 
 
-async def test_maybe_start_mobile_recording_uses_driver_default_on_android(tmp_path):
+async def test_maybe_start_mobile_recording_uses_max_time_limit_on_android(tmp_path):
     # Android (`adb screenrecord`) já grava em H.264 nativamente — não tem
-    # (nem precisa) da opção `videoType`.
+    # (nem precisa) da opção `videoType`. `timeLimit` é forçado pro máximo
+    # que o driver aceita (180s — teto do próprio `adb screenrecord`).
     driver = _FakeRecordingDriver()
     resources = _RunResources()
     resources.mobile_session = _mobile_session(driver, tmp_path, "android")
@@ -161,7 +166,7 @@ async def test_maybe_start_mobile_recording_uses_driver_default_on_android(tmp_p
     await _maybe_start_mobile_recording(resources, "run-1")
 
     assert resources.mobile_recording_started is True
-    assert driver.calls == [{}]
+    assert driver.calls == [{"timeLimit": _ANDROID_RECORDING_TIME_LIMIT_SECONDS}]
 
 
 async def test_maybe_start_mobile_recording_failure_is_best_effort(tmp_path):
