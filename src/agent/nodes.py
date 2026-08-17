@@ -14,6 +14,7 @@ import base64
 import logging
 import shutil
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -108,6 +109,15 @@ class _RunResources:
         # impedir a exploração de rodar — best-effort).
         self.web_video: Any | None = None
         self.mobile_recording_started: bool = False
+        # Timestamp monotônico do último `start_recording_screen` — usado
+        # por `_maybe_rotate_mobile_recording` pra saber quando é hora de
+        # rotacionar (ver essa função pro porquê). `mobile_recording_segments`
+        # acumula o PATH de cada segmento já parado e salvo em disco; o
+        # segmento "atual" (ainda gravando) não entra aí até ser parado —
+        # `_save_mobile_video_evidence` no teardown pega esse último pedaço
+        # e concatena a lista inteira num vídeo só.
+        self.mobile_recording_started_at: float = 0.0
+        self.mobile_recording_segments: list[Path] = []
 
 
 async def _safe_close_web(resources: "_RunResources") -> None:
@@ -531,6 +541,9 @@ async def explore_app(state: RunState) -> RunState:
             history.append("Exploração cancelada pelo usuário.")
             break
 
+        if resources.mobile_session is not None:
+            await _maybe_rotate_mobile_recording(resources, run_id)
+
         session.set_step_context(0, i)
         outcome = await run_explore_action(tools=tools, chat_model=chat_model, history=history, max_actions=max_actions)
 
@@ -587,6 +600,36 @@ async def _synthesize_with_validation(*, chat_model, trace: list[str], platform:
 _IOS_RECORDING_TIME_LIMIT_SECONDS = 600  # máximo aceito pelo driver XCUITest
 _ANDROID_RECORDING_TIME_LIMIT_SECONDS = 180  # máximo aceito por `adb screenrecord` — não dá pra passar disso numa única gravação
 
+# Quando ROTACIONAR a gravação atual (parar + salvar segmento + começar
+# outra) DURANTE a exploração, com margem de segurança sob o teto de cada
+# driver acima — rotacionar cedo demais desperdiça só uma parada/reinício a
+# mais; tarde demais arrisca perder o fim de uma ação se o driver encerrar a
+# gravação sozinho bem em cima do limite. Ver `_maybe_rotate_mobile_recording`.
+_IOS_RECORDING_ROTATE_SECONDS = 570
+_ANDROID_RECORDING_ROTATE_SECONDS = 150
+
+
+def _start_recording_kwargs(platform: str) -> dict[str, Any]:
+    """Kwargs de `start_recording_screen` — os mesmos tanto pra gravação
+    inicial (`_maybe_start_mobile_recording`) quanto pra cada reinício de
+    `_maybe_rotate_mobile_recording`, centralizados aqui pra garantir que
+    todo segmento saia com o MESMO codec/parâmetros — pré-requisito pra
+    `_concat_video_segments` poder juntar tudo com `-c copy` (sem reencode)
+    no final."""
+    if platform == "ios":
+        # No iOS, o default do driver XCUITest é `videoType="mjpeg"` (Motion
+        # JPEG) — um codec que NENHUM navegador sabe decodificar dentro de
+        # um <video> HTML5 (achado ao vivo: o player ficava preso pra
+        # sempre em "carregando", mesmo depois do remux "faststart" — o
+        # container estava certo, o CODEC que não tocava). Força `libx264`
+        # (H.264, suportado universalmente) — a própria doc do Appium
+        # recomenda `pixelFormat="yuv420p"` junto pra compatibilidade ampla
+        # de player.
+        return {"videoType": "libx264", "pixelFormat": "yuv420p", "timeLimit": _IOS_RECORDING_TIME_LIMIT_SECONDS}
+    # Android já grava em H.264 nativamente via `adb screenrecord` (não tem
+    # essa opção — nem precisa).
+    return {"timeLimit": _ANDROID_RECORDING_TIME_LIMIT_SECONDS}
+
 
 async def _maybe_start_mobile_recording(resources: "_RunResources", run_id: str) -> None:
     """Best-effort — falhar ao iniciar a gravação não deve impedir a
@@ -594,43 +637,73 @@ async def _maybe_start_mobile_recording(resources: "_RunResources", run_id: str)
     isso falhar, e `teardown_target` simplesmente não tenta salvar vídeo
     nenhum nesse caso.
 
-    No iOS, o default do driver XCUITest pra `start_recording_screen` é
-    `videoType="mjpeg"` (Motion JPEG) — um codec que NENHUM navegador sabe
-    decodificar dentro de um `<video>` HTML5 (achado ao vivo: o player
-    ficava preso pra sempre em "carregando", mesmo depois do remux
-    "faststart" — o container estava certo, o CODEC que não tocava).
-    Força `libx264` (H.264, suportado universalmente) — a própria doc do
-    Appium recomenda `pixelFormat="yuv420p"` junto pra compatibilidade
-    ampla de player. Android já grava em H.264 nativamente via `adb
-    screenrecord` (não tem essa opção — nem precisa).
-
     `timeLimit` do driver tem DEFAULT de 180s (3min) nos dois SOs — bem
     menos que uma exploração de verdade costuma levar (achado ao vivo: uma
     run que só chegou no dashboard aos ~4min13s teve um vídeo de 175s —
     a gravação simplesmente parou sozinha ANTES da navegação acontecer,
     sem erro nenhum). Força o MÁXIMO permitido por cada driver: 600s (10min)
     no iOS, 180s no Android (limite rígido do próprio `adb screenrecord` —
-    não dá pra passar disso numa gravação só; uma exploração Android bem
-    longa ainda pode perder o final do vídeo, limitação conhecida sem
-    solução simples aqui — encadear gravações é bem mais complexo e fica
-    fora do escopo por ora)."""
+    não dá pra passar disso numa gravação só). Pra explorações que passam
+    mesmo assim desse teto, `_maybe_rotate_mobile_recording` encadeia
+    gravações novas automaticamente durante o loop de exploração — ver essa
+    função pro esquema completo."""
     assert resources.mobile_session is not None
     session = resources.mobile_session
     try:
-        if session.platform == "ios":
-            await asyncio.to_thread(
-                session.driver.start_recording_screen,
-                videoType="libx264",
-                pixelFormat="yuv420p",
-                timeLimit=_IOS_RECORDING_TIME_LIMIT_SECONDS,
-            )
-        else:
-            await asyncio.to_thread(
-                session.driver.start_recording_screen, timeLimit=_ANDROID_RECORDING_TIME_LIMIT_SECONDS
-            )
+        await asyncio.to_thread(session.driver.start_recording_screen, **_start_recording_kwargs(session.platform))
         resources.mobile_recording_started = True
+        resources.mobile_recording_started_at = time.monotonic()
     except Exception as e:
         logger.warning("Falha ao iniciar gravação de tela (run %s): %s", run_id, e)
+
+
+def _write_recording_segment(artifacts_dir: Path, index: int, b64_video: bytes | str) -> Path:
+    video_dir = artifacts_dir / "video"
+    video_dir.mkdir(parents=True, exist_ok=True)
+    path = video_dir / f"segmento_{index:02d}.mp4"
+    path.write_bytes(base64.b64decode(b64_video))
+    return path
+
+
+async def _maybe_rotate_mobile_recording(resources: "_RunResources", run_id: str) -> None:
+    """Chamada a cada ação do loop de exploração (`explore_app`) — pára e
+    reinicia a gravação de tela ANTES de bater no teto de cada driver
+    (`_IOS_RECORDING_ROTATE_SECONDS`/`_ANDROID_RECORDING_ROTATE_SECONDS`,
+    com margem sob `_IOS_RECORDING_TIME_LIMIT_SECONDS`/
+    `_ANDROID_RECORDING_TIME_LIMIT_SECONDS`).
+
+    Sem isso, uma exploração mais longa que o teto perde tudo que aconteceu
+    DEPOIS dele silenciosamente — achado ao vivo contra o Android: uma
+    exploração real levou ~7m30 (Anthropic navegando fundo: dashboard,
+    Extrato, Gestão, 5 itens de Menu, Ajuda...), mas o vídeo salvo cobria só
+    os primeiros 178s (o teto de 180s do próprio `adb screenrecord`) — o
+    resto da navegação, tudo real e documentada no trace/`.feature`
+    gerado, simplesmente não tinha evidência em vídeo nenhuma.
+
+    Cada segmento parado aqui vai pra `resources.mobile_recording_segments`
+    (arquivo já em disco, não em memória) — `_save_mobile_video_evidence`
+    no teardown pega o ÚLTIMO pedaço (ainda gravando) e concatena a lista
+    inteira num vídeo contínuo só. Best-effort, igual ao início da
+    gravação: uma rotação que falha loga um aviso e deixa a gravação atual
+    prosseguir (por conta própria, sujeita ainda ao teto do driver) — nunca
+    derruba a exploração."""
+    if not resources.mobile_recording_started:
+        return
+    session = resources.mobile_session
+    assert session is not None
+    rotate_after = _IOS_RECORDING_ROTATE_SECONDS if session.platform == "ios" else _ANDROID_RECORDING_ROTATE_SECONDS
+    if time.monotonic() - resources.mobile_recording_started_at < rotate_after:
+        return
+    try:
+        b64_video = await asyncio.to_thread(session.driver.stop_recording_screen)
+        segment = await asyncio.to_thread(
+            _write_recording_segment, session.artifacts_dir, len(resources.mobile_recording_segments), b64_video
+        )
+        resources.mobile_recording_segments.append(segment)
+        await asyncio.to_thread(session.driver.start_recording_screen, **_start_recording_kwargs(session.platform))
+        resources.mobile_recording_started_at = time.monotonic()
+    except Exception as e:
+        logger.warning("Falha ao rotacionar a gravação de tela da exploração (run %s): %s", run_id, e)
 
 
 async def _save_web_video_evidence(run_id: str, video: Any) -> None:
@@ -659,9 +732,11 @@ def _remux_faststart(path: Path) -> None:
     baixável (`Baixar artefatos`), só não toca direto no navegador.
 
     Rede de segurança independente do CODEC (que é o outro problema real
-    que o navegador tinha com o vídeo — ver `_maybe_start_mobile_recording`,
-    que força H.264 no iOS): mesmo com um codec suportado, nada garante que
-    o `moov` já venha no início por padrão."""
+    que o navegador tinha com o vídeo — ver `_start_recording_kwargs`, que
+    força H.264 no iOS): mesmo com um codec suportado, nada garante que
+    o `moov` já venha no início por padrão. Roda sobre o vídeo FINAL, já
+    concatenado se a exploração precisou de mais de um segmento (ver
+    `_concat_video_segments`)."""
     if not shutil.which("ffmpeg"):
         logger.warning(
             "ffmpeg não encontrado — vídeo da exploração salvo sem remux 'faststart' "
@@ -682,16 +757,73 @@ def _remux_faststart(path: Path) -> None:
         tmp_path.unlink(missing_ok=True)
 
 
-async def _save_mobile_video_evidence(run_id: str, session: MobileSession) -> None:
+def _concat_video_segments(segments: list[Path], output_path: Path) -> None:
+    """Junta os segmentos gravados por `_maybe_rotate_mobile_recording` (mais
+    o último, ainda em memória quando `_save_mobile_video_evidence` chama
+    isso) num vídeo CONTÍNUO só, na ordem em que foram gravados. Todo
+    segmento sai do mesmo `_start_recording_kwargs` (mesmo codec/parâmetros),
+    então o ffmpeg concat demuxer com `-c copy` (sem reencode) é seguro e
+    rápido — não é um "melhor esforço" arriscado, é o caso padrão dele.
+
+    Caso comum (exploração cabe num único segmento, sem rotação nenhuma):
+    só renomeia — sem chamar ffmpeg à toa. Best-effort no caso com múltiplos
+    segmentos: se o ffmpeg não estiver disponível ou a concatenação falhar,
+    mantém só o PRIMEIRO segmento como resultado (perde o resto, mas ainda
+    cobre o início da exploração — bem melhor que nenhuma evidência)."""
+    if len(segments) == 1:
+        segments[0].replace(output_path)
+        return
+    if not shutil.which("ffmpeg"):
+        logger.warning(
+            "ffmpeg não encontrado — mantendo só o primeiro dos %d segmentos gravados "
+            "(a exploração passou do teto de gravação contínua do driver mais de uma vez).",
+            len(segments),
+        )
+        segments[0].replace(output_path)
+        for segment in segments[1:]:
+            segment.unlink(missing_ok=True)
+        return
+    list_file = output_path.with_suffix(".concat.txt")
+    list_file.write_text("\n".join(f"file '{segment.resolve()}'" for segment in segments))
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", str(output_path)],
+            capture_output=True,
+            timeout=120,
+            check=True,
+        )
+        for segment in segments:
+            segment.unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning(
+            "Falha ao concatenar os %d segmentos do vídeo da exploração (mantendo só o primeiro): %s",
+            len(segments),
+            e,
+        )
+        segments[0].replace(output_path)
+        for segment in segments[1:]:
+            segment.unlink(missing_ok=True)
+    finally:
+        list_file.unlink(missing_ok=True)
+
+
+async def _save_mobile_video_evidence(run_id: str, resources: "_RunResources") -> None:
     """Precisa rodar ANTES de `_safe_close_mobile` (que dá `driver.quit()`) —
     ao contrário do lado web, aqui a gravação precisa ser parada enquanto a
-    sessão do driver ainda está viva."""
+    sessão do driver ainda está viva. Pega o ÚLTIMO segmento (o que ainda
+    estava gravando) e junta com todos os anteriores que
+    `_maybe_rotate_mobile_recording` já tinha parado e salvo durante a
+    exploração — ver `_concat_video_segments`."""
+    session = resources.mobile_session
+    assert session is not None
     try:
         b64_video = await asyncio.to_thread(session.driver.stop_recording_screen)
-        video_dir = session.artifacts_dir / "video"
-        video_dir.mkdir(parents=True, exist_ok=True)
-        path = video_dir / "exploracao.mp4"
-        path.write_bytes(base64.b64decode(b64_video))
+        final_segment = await asyncio.to_thread(
+            _write_recording_segment, session.artifacts_dir, len(resources.mobile_recording_segments), b64_video
+        )
+        segments = [*resources.mobile_recording_segments, final_segment]
+        path = session.artifacts_dir / "video" / "exploracao.mp4"
+        await asyncio.to_thread(_concat_video_segments, segments, path)
         await asyncio.to_thread(_remux_faststart, path)
         store.add_evidence(run_id, None, "video", "Exploração", str(path))
     except Exception as e:
@@ -711,7 +843,7 @@ async def teardown_target(state: RunState) -> RunState:
             await _save_web_video_evidence(run_id, video)
     elif resources.mobile_session is not None:
         if resources.mobile_recording_started:
-            await _save_mobile_video_evidence(run_id, resources.mobile_session)
+            await _save_mobile_video_evidence(run_id, resources)
         await _safe_close_mobile(resources)
     return state
 
